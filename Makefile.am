@@ -55,4 +55,12 @@ sources = \
         io_bbview_file_set_view.c \
         io_bbview_file_open.c \
         io_bbview_file_write.c \
-        io_bbview_file_read.c
+        io_bbview_file_read.c \
+        io_bbview_file_flush.c
+
+sbin_PROGRAMS = bbviewd
+
+bbviewd_SOURCES = bbviewd.c
+bbviewd_LDADD = \
+    $(OMPI_TOP_BUILDDIR)/ompi/mca/common/ompio/libmca_common_ompio.la \
+    $(top_builddir)/ompi/libmpi.la

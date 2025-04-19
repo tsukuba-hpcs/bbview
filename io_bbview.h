@@ -84,6 +84,14 @@ OMPI_DECLSPEC extern int mca_io_ompio_coll_timing_info;
 #define OMPIO_MODE_APPEND            128
 #define OMPIO_MODE_SEQUENTIAL        256
 
+#define BBVIEW_SOCK "/tmp/bbview.sock"
+#define BBVIEW_ATTR_DEST_PATH "user.bbview.dest_path"
+#define BBVIEW_ATTR_ETYPE_SIZE "user.bbview.etype_size"
+#define BBVIEW_ATTR_BLOCK_LENGTH "user.bbview.blocklength"
+#define BBVIEW_ATTR_STRIDE "user.bbview.stride"
+#define BBVIEW_ATTR_DISP "user.bbview.disp"
+#define BBVIEW_ATTR_COUNT "user.bbview.count"
+
 /*---------------------------*/
 
 BEGIN_C_DECLS
@@ -103,6 +111,19 @@ OMPI_DECLSPEC extern mca_io_base_component_3_0_0_t mca_io_bbview_component;
 
 struct mca_common_bbview_data_t {
    ompio_file_t ompio_fh;
+
+   size_t view_index; // 0: default view, 1~: user defined view (saved in the local file)
+
+   // Original view parameters
+   OMPI_MPI_OFFSET_TYPE saved_disp;
+   size_t saved_etype_size;
+   size_t saved_count;
+   size_t saved_blklen;
+   size_t saved_stride;
+   char *saved_datarep;
+   opal_info_t *saved_info;
+   ompi_datatype_t *saved_etype;
+   ompi_datatype_t *saved_filetype;
 };
 typedef struct mca_common_bbview_data_t mca_common_bbview_data_t;
 
@@ -148,6 +169,9 @@ int mca_io_bbview_file_get_view (struct ompi_file_t *fh,
                                 struct ompi_datatype_t **etype,
                                 struct ompi_datatype_t **filetype,
                                 char *datarep);
+
+int mca_io_bbview_file_flush(struct ompi_file_t *fh);
+
 int mca_io_bbview_file_open (struct ompi_communicator_t *comm,
                             const char *filename,
                             int amode,

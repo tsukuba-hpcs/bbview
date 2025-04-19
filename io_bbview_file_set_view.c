@@ -66,9 +66,9 @@ mca_io_bbview_file_set_view(ompi_file_t *fp, OMPI_MPI_OFFSET_TYPE disp,
 	int ret = OMPI_SUCCESS;
 	mca_common_bbview_data_t *data;
 	ompio_file_t *fh;
+	char local_filename[PATH_MAX];
 
-	if ((strcmp(datarep, "native") && strcmp(datarep, "NATIVE") &&
-	     strcmp(datarep, "external32") && strcmp(datarep, "EXTERNAL32"))) {
+	if ((strcmp(datarep, "native") && strcmp(datarep, "NATIVE"))) {
 		return MPI_ERR_UNSUPPORTED_DATAREP;
 	}
 
@@ -88,8 +88,69 @@ mca_io_bbview_file_set_view(ompi_file_t *fp, OMPI_MPI_OFFSET_TYPE disp,
 	}
 
 	OPAL_THREAD_LOCK(&fp->f_lock);
+	if (data->view_index) {
+		/* flush the previous view */
+		ret = mca_io_bbview_file_flush(fp);
+		if (OMPI_SUCCESS != ret) {
+			OPAL_THREAD_UNLOCK(&fp->f_lock);
+			return ret;
+		}
+		data->saved_datarep = NULL;
+		data->saved_info = NULL;
+	}
+
+	data->view_index++;
+	ompi_datatype_type_size(etype, &data->saved_etype_size);
+	if (datarep)
+		data->saved_datarep = strdup(datarep);
+	if (info)
+		opal_info_dup(info, &data->saved_info);
+	data->saved_etype = etype;
+	data->saved_filetype = filetype;
+	data->saved_disp = disp;
+
+    int num_ints, num_addrs, num_types, combiner;
+retry:
+    PMPI_Type_get_envelope(filetype, &num_ints, &num_addrs, &num_types, &combiner);
+	int *ints = malloc(sizeof(int) * num_ints);
+	MPI_Aint *addrs = malloc(sizeof(MPI_Aint) * num_addrs);
+	MPI_Datatype *types = malloc(sizeof(MPI_Datatype) * num_types);
+    if (combiner == MPI_COMBINER_VECTOR) {
+        PMPI_Type_get_contents(filetype, num_ints, num_addrs, num_types, ints, addrs, types);
+        data->saved_count = ints[0];
+        data->saved_blklen = ints[1];
+        data->saved_stride = ints[2];
+		free(ints);
+		free(addrs);
+		free(types);
+    } else if (combiner == MPI_COMBINER_DUP) {
+        MPI_Type_get_contents(filetype, num_ints, num_addrs, num_types, ints, addrs, types);
+        filetype = types[0];
+		free(ints);
+		free(addrs);
+		free(types);
+		goto retry;
+	} else {
+        fprintf(stderr, "Unsupported filetype combiner: %d\n", combiner);
+        OPAL_THREAD_UNLOCK(&fp->f_lock);
+		return OMPI_ERR_NOT_SUPPORTED;
+    }
+	close(fh->fd);
+	snprintf(local_filename, sizeof(local_filename), "/tmp/%s-%d-%ld",
+		fp->f_filename, ompi_comm_rank(fp->f_comm), data->view_index);
+	for (size_t i = strlen("/tmp/"); i < strlen(local_filename); i++) {
+		if (local_filename[i] == '/')
+			local_filename[i] = '-';
+	}
+	fh->fd = open(local_filename, O_RDWR | O_CREAT | O_TRUNC, 0666);
+	if (fh->fd < 0) {
+		OPAL_THREAD_UNLOCK(&fp->f_lock);
+		return OMPI_ERROR;
+	}
+	
 	ret =
-	    mca_common_ompio_set_view(fh, disp, etype, filetype, datarep, info);
+		mca_common_ompio_set_view(fh, 0, etype, etype, datarep, info);
+
 	OPAL_THREAD_UNLOCK(&fp->f_lock);
 	return ret;
 }
@@ -106,10 +167,10 @@ mca_io_bbview_file_get_view(struct ompi_file_t *fp, OMPI_MPI_OFFSET_TYPE *disp,
 	fh = &data->ompio_fh;
 
 	OPAL_THREAD_LOCK(&fp->f_lock);
-	*disp = fh->f_fview.f_disp;
-	datatype_duplicate(fh->f_etype, etype);
-	datatype_duplicate(fh->f_orig_filetype, filetype);
-	strcpy(datarep, fh->f_datarep);
+	*disp = data->saved_disp;
+	datatype_duplicate(data->saved_etype, etype);
+	datatype_duplicate(data->saved_filetype, filetype);
+	strcpy(datarep, data->saved_datarep);
 	OPAL_THREAD_UNLOCK(&fp->f_lock);
 
 	return OMPI_SUCCESS;

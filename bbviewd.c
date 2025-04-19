@@ -1,0 +1,346 @@
+#define _GNU_SOURCE
+#include <pthread.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/xattr.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <limits.h>
+#include <signal.h>
+#include <stdatomic.h>
+#include <syslog.h>
+
+#include "io_bbview.h"
+
+struct job {
+	char src[PATH_MAX];
+	struct job *next;
+};
+
+static struct job *q_head = NULL, *q_tail = NULL;
+static pthread_mutex_t q_mtx = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t q_cv = PTHREAD_COND_INITIALIZER;
+static atomic_int active_workers = 0;
+static atomic_bool shutting_down = 0;
+
+static void
+enqueue(const char *path)
+{
+	struct job *j = calloc(1, sizeof(*j));
+	if (!j) {
+		syslog(LOG_ERR, "calloc: %s", strerror(errno));
+		return;
+	}
+	strncpy(j->src, path, sizeof(j->src) - 1);
+
+	pthread_mutex_lock(&q_mtx);
+	if (!q_tail)
+		q_head = q_tail = j;
+	else {
+		q_tail->next = j;
+		q_tail = j;
+	}
+	pthread_cond_signal(&q_cv);
+	pthread_mutex_unlock(&q_mtx);
+}
+
+static int
+dequeue(char *out)
+{
+	pthread_mutex_lock(&q_mtx);
+	while (!q_head && !shutting_down)
+		pthread_cond_wait(&q_cv, &q_mtx);
+
+	if (!q_head) {
+		pthread_mutex_unlock(&q_mtx);
+		return 0; /* shutting down */
+	}
+
+	struct job *j = q_head;
+	q_head = j->next;
+	if (!q_head)
+		q_tail = NULL;
+	pthread_mutex_unlock(&q_mtx);
+
+	strcpy(out, j->src);
+	free(j);
+	return 1;
+}
+
+static int
+execute(int in_fd, int out_fd, size_t etype_size, size_t blocklength,
+	size_t stride, size_t disp, size_t count)
+{
+	int pipefd[2];
+    if (pipe(pipefd) == -1) {
+        syslog(LOG_ERR, "pipe: %s", strerror(errno));
+        return -1;
+    }
+
+    for (size_t c = 0; c < count; c++) {
+        off_t src_off = c * blocklength * etype_size;
+        off_t dst_off = disp + c * stride * etype_size;
+        size_t len = blocklength * etype_size;
+
+        ssize_t spliced_in = splice(in_fd, &src_off, pipefd[1], NULL, len, 0);
+        if (spliced_in != (ssize_t)len) {
+            syslog(LOG_ERR, "splice(in): %s", strerror(errno));
+            close(pipefd[0]);
+            close(pipefd[1]);
+            return -1;
+        }
+
+        ssize_t spliced_out = splice(pipefd[0], NULL, out_fd, &dst_off, len, 0);
+        if (spliced_out != (ssize_t)len) {
+            syslog(LOG_ERR, "splice(out): %s", strerror(errno));
+            close(pipefd[0]);
+            close(pipefd[1]);
+            return -1;
+        }
+    }
+
+    close(pipefd[0]);
+    close(pipefd[1]);
+}
+
+struct worker_arg {
+	int id;
+};
+
+static void *
+worker_fn(void *arg)
+{
+	struct worker_arg *w = arg;
+
+	char path[PATH_MAX];
+	atomic_fetch_add(&active_workers, 1);
+
+	while (dequeue(path)) {
+		/* obtain destination path from xattr */
+		char dst[PATH_MAX];
+		ssize_t xl;
+		char buf[PATH_MAX];
+		size_t etype_size = 0, blocklength = 0, stride = 0, disp = 0,
+		       count = 0;
+		int in_fd, out_fd;
+		int rc;
+		struct stat st;
+
+		if ((xl = getxattr(path, BBVIEW_ATTR_DEST_PATH, dst,
+				   sizeof(dst) - 1)) < 0) {
+			syslog(LOG_ERR,
+			       "[worker %d] missing xattr %s on %s: %s\n",
+			       w->id, BBVIEW_ATTR_DEST_PATH, path, strerror(errno));
+			continue;
+		}
+		dst[xl] = '\0';
+		if (stat(dst, &st) < 0) {
+			syslog(LOG_ERR, "[worker %d] stat %s: %s\n", w->id, dst,
+			       strerror(errno));
+			continue;
+		}
+
+		in_fd = open(path, O_RDONLY, 0);
+		out_fd = open(dst, O_WRONLY, 0);
+		if (in_fd < 0 || out_fd < 0) {
+			syslog(LOG_ERR, "open: %s", strerror(errno));
+			goto cont;
+		}
+
+		if ((xl = fgetxattr(in_fd, BBVIEW_ATTR_ETYPE_SIZE, buf,
+				    sizeof(buf) - 1)) < 0) {
+			syslog(LOG_ERR,
+			       "[worker %d] missing xattr %s on %s: %s\n",
+			       w->id, BBVIEW_ATTR_ETYPE_SIZE, path, strerror(errno));
+			goto cont;
+		}
+		buf[xl] = '\0';
+		sscanf(buf, "%zu", &etype_size);
+		if (etype_size == 0) {
+			syslog(LOG_ERR,
+			       "[worker %d] invalid etype size %s on %s\n",
+			       w->id, buf, path);
+			goto cont;
+		}
+		if ((xl = fgetxattr(in_fd, BBVIEW_ATTR_BLOCK_LENGTH, buf,
+				    sizeof(buf) - 1)) < 0) {
+			syslog(LOG_ERR,
+			       "[worker %d] missing xattr %s on %s: %s\n",
+			       w->id, BBVIEW_ATTR_BLOCK_LENGTH, path, strerror(errno));
+			goto cont;
+		}
+		buf[xl] = '\0';
+		sscanf(buf, "%zu", &blocklength);
+		if (blocklength == 0) {
+			syslog(LOG_ERR,
+			       "[worker %d] invalid block length %s on %s\n",
+			       w->id, buf, path);
+			goto cont;
+		}
+		if ((xl = fgetxattr(in_fd, BBVIEW_ATTR_STRIDE, buf, sizeof(buf) - 1)) <
+		    0) {
+			syslog(LOG_ERR,
+			       "[worker %d] missing xattr %s on %s: %s\n",
+			       w->id, BBVIEW_ATTR_STRIDE, path, strerror(errno));
+			goto cont;
+		}
+		buf[xl] = '\0';
+		sscanf(buf, "%zu", &stride);
+		if (stride == 0) {
+			syslog(LOG_ERR, "[worker %d] invalid stride %s on %s\n",
+			       w->id, buf, path);
+			goto cont;
+		}
+		if ((xl = fgetxattr(in_fd, BBVIEW_ATTR_DISP, buf, sizeof(buf) - 1)) <
+		    0) {
+			syslog(LOG_ERR,
+			       "[worker %d] missing xattr %s on %s: %s\n",
+			       w->id, BBVIEW_ATTR_DISP, path, strerror(errno));
+			goto cont;
+		}
+		buf[xl] = '\0';
+		sscanf(buf, "%zu", &disp);
+		if ((xl = fgetxattr(in_fd, BBVIEW_ATTR_COUNT, buf, sizeof(buf) - 1)) <
+		    0) {
+			syslog(LOG_ERR,
+			       "[worker %d] missing xattr %s on %s: %s\n",
+			       w->id, BBVIEW_ATTR_COUNT, path, strerror(errno));
+			goto cont;
+		}
+		buf[xl] = '\0';
+		sscanf(buf, "%zu", &count);
+		if (count == 0) {
+			syslog(LOG_ERR, "[worker %d] invalid count %s on %s\n",
+			       w->id, buf, path);
+			goto cont;
+		}
+		rc = execute(in_fd, out_fd, etype_size, blocklength, stride,
+			     disp, count);
+
+		if (!rc) {
+			syslog(LOG_INFO,
+			       "[worker %d] %s -> %s (%lu bytes) OK\n", w->id,
+			       path, dst, count * blocklength * etype_size);
+		}
+	cont:
+		if (in_fd >= 0)
+			close(in_fd);
+		if (out_fd >= 0)
+			close(out_fd);
+		continue;
+	}
+
+	atomic_fetch_sub(&active_workers, 1);
+	return NULL;
+}
+
+static int
+create_socket(void)
+{
+	unlink(BBVIEW_SOCK);
+	int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (fd < 0) {
+		syslog(LOG_ERR, "socket: %s", strerror(errno));
+		return -1;
+	}
+	struct sockaddr_un addr = {0};
+	addr.sun_family = AF_UNIX;
+	strncpy(addr.sun_path, BBVIEW_SOCK, sizeof(addr.sun_path) - 1);
+	if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+		syslog(LOG_ERR, "bind: %s", strerror(errno));
+		close(fd);
+		return -1;
+	}
+	if (listen(fd, 16) < 0) {
+		syslog(LOG_ERR, "listen: %s", strerror(errno));
+		close(fd);
+		return -1;
+	}
+	return fd;
+}
+
+static void
+listener_loop(int sock_fd)
+{
+	for (;;) {
+		int cfd = accept(sock_fd, NULL, NULL);
+		if (cfd < 0) {
+			if (errno == EINTR)
+				continue;
+			syslog(LOG_ERR, "accept: %s", strerror(errno));
+			break;
+		}
+		char buf[PATH_MAX + 16] = {0};
+		ssize_t n = read(cfd, buf, sizeof(buf) - 1);
+		close(cfd);
+		if (n <= 0)
+			continue;
+		buf[n] = '\0';
+		if (!strncmp(buf, "terminate", 9)) {
+			shutting_down = 1;
+			pthread_cond_broadcast(&q_cv);
+			break;
+		}
+		/* strip trailing newline */
+		char *nl = strchr(buf, '\n');
+		if (nl)
+			*nl = '\0';
+		enqueue(buf);
+	}
+	/* stop accepting */
+	close(sock_fd);
+}
+
+int
+main(int argc, char **argv)
+{
+	if (daemon(0, 0) < 0) {
+		perror("daemon");
+		exit(EXIT_FAILURE);
+	}
+
+	if (argc != 2) {
+		fprintf(stderr, "Usage: %s <num_threads>\n", argv[0]);
+		return EXIT_FAILURE;
+	}
+
+	openlog("bbviewd", LOG_PID | LOG_CONS, LOG_DAEMON);
+
+	int nthreads = atoi(argv[1]);
+	if (nthreads <= 0)
+		nthreads = 1;
+
+	int sock_fd = create_socket();
+	if (sock_fd < 0)
+		return EXIT_FAILURE;
+
+	/* ignore SIGPIPE so writes to dead clients don’t kill us */
+	signal(SIGPIPE, SIG_IGN);
+
+	pthread_t *tids = calloc(nthreads, sizeof(*tids));
+	struct worker_arg *args = calloc(nthreads, sizeof(*args));
+	for (int i = 0; i < nthreads; ++i) {
+		args[i].id = i;
+		if (pthread_create(&tids[i], NULL, worker_fn, &args[i]) != 0) {
+			syslog(LOG_ERR, "pthread_create: %s", strerror(errno));
+			return EXIT_FAILURE;
+		}
+	}
+
+	listener_loop(sock_fd);
+
+	/* wait for workers to drain and exit */
+	for (int i = 0; i < nthreads; ++i)
+		pthread_join(tids[i], NULL);
+
+	unlink(BBVIEW_SOCK);
+	free(tids);
+	free(args);
+	return 0;
+}

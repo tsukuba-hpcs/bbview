@@ -87,6 +87,15 @@ mca_io_bbview_file_close(ompi_file_t *fh)
 		 * to file_close */
 		return ret;
 	}
+	/* flush view */
+	if (data->view_index) {
+		OPAL_THREAD_LOCK(&fh->f_lock);
+		ret = mca_io_bbview_file_flush(fh);
+		OPAL_THREAD_UNLOCK(&fh->f_lock);
+		if (OMPI_SUCCESS != ret) {
+			return ret;
+		}
+	}
 	/* No locking required for file_close according to my understanding.
 	   Multiple threads closing the same file handle at the same time
 	   is a clear user error.
