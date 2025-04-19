@@ -136,9 +136,9 @@ retry:
 		return OMPI_ERR_NOT_SUPPORTED;
     }
 	close(fh->fd);
-	snprintf(local_filename, sizeof(local_filename), "/tmp/%s-%d-%ld",
+	snprintf(local_filename, sizeof(local_filename), BBVIEW_TMP_DIR "/%s-%d-%ld",
 		fp->f_filename, ompi_comm_rank(fp->f_comm), data->view_index);
-	for (size_t i = strlen("/tmp/"); i < strlen(local_filename); i++) {
+	for (size_t i = strlen(BBVIEW_TMP_DIR) + 2; i < strlen(local_filename); i++) {
 		if (local_filename[i] == '/')
 			local_filename[i] = '-';
 	}
