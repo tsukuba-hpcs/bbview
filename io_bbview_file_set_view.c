@@ -115,26 +115,26 @@ retry:
 	int *ints = malloc(sizeof(int) * num_ints);
 	MPI_Aint *addrs = malloc(sizeof(MPI_Aint) * num_addrs);
 	MPI_Datatype *types = malloc(sizeof(MPI_Datatype) * num_types);
-    if (combiner == MPI_COMBINER_VECTOR) {
-        PMPI_Type_get_contents(filetype, num_ints, num_addrs, num_types, ints, addrs, types);
-        data->saved_count = ints[0];
-        data->saved_blklen = ints[1];
-        data->saved_stride = ints[2];
+	if (combiner == MPI_COMBINER_VECTOR) {
+		PMPI_Type_get_contents(filetype, num_ints, num_addrs, num_types, ints, addrs, types);
+		data->saved_count = ints[0];
+		data->saved_blklen = ints[1];
+		data->saved_stride = ints[2];
 		free(ints);
 		free(addrs);
 		free(types);
-    } else if (combiner == MPI_COMBINER_DUP) {
-        MPI_Type_get_contents(filetype, num_ints, num_addrs, num_types, ints, addrs, types);
-        filetype = types[0];
+	} else if (combiner == MPI_COMBINER_DUP) {
+		MPI_Type_get_contents(filetype, num_ints, num_addrs, num_types, ints, addrs, types);
+		filetype = types[0];
 		free(ints);
 		free(addrs);
 		free(types);
 		goto retry;
 	} else {
-        fprintf(stderr, "Unsupported filetype combiner: %d\n", combiner);
-        OPAL_THREAD_UNLOCK(&fp->f_lock);
+		fprintf(stderr, "Unsupported filetype combiner: %d\n", combiner);
+		OPAL_THREAD_UNLOCK(&fp->f_lock);
 		return OMPI_ERR_NOT_SUPPORTED;
-    }
+	}
 	close(fh->fd);
 	snprintf(local_filename, sizeof(local_filename), BBVIEW_TMP_DIR "/%s-%d-%ld",
 		fp->f_filename, ompi_comm_rank(fp->f_comm), data->view_index);
@@ -142,7 +142,11 @@ retry:
 		if (local_filename[i] == '/')
 			local_filename[i] = '-';
 	}
-	fh->fd = open(local_filename, O_RDWR | O_CREAT | O_TRUNC, 0666);
+	int flags = O_RDWR | O_CREAT | O_TRUNC;
+	if ((data->saved_blklen * data->saved_etype_size) % 4096 == 0) {
+		flags |= O_DIRECT;
+	}
+	fh->fd = open(local_filename, flags, 0666);
 	if (fh->fd < 0) {
 		OPAL_THREAD_UNLOCK(&fp->f_lock);
 		return OMPI_ERROR;
