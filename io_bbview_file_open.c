@@ -327,6 +327,11 @@ mca_io_bbview_file_set_atomicity(ompi_file_t *fh, int flag)
 		flag = 1;
 	}
 
+	if (data->view_index > 0) {
+		OPAL_THREAD_UNLOCK(&fh->f_lock);
+		return OMPI_ERROR;
+	}
+
 	/* check if the atomicity flag is the same on all processes */
 	tmp = flag;
 	data->ompio_fh.f_comm->c_coll->coll_bcast(

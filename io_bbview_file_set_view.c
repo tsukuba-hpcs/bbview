@@ -87,6 +87,15 @@ mca_io_bbview_file_set_view(ompi_file_t *fp, OMPI_MPI_OFFSET_TYPE disp,
 		return MPI_ERR_DISP;
 	}
 
+	if (fh->f_atomicity ||
+		(fp->f_amode & MPI_MODE_RDONLY) ||
+		(fp->f_amode & MPI_MODE_RDWR)) {
+		OPAL_THREAD_LOCK(&fp->f_lock);
+		ret = mca_common_ompio_set_view(fh, disp, etype, filetype, datarep, info);
+		OPAL_THREAD_UNLOCK(&fp->f_lock);
+		return ret;
+	}
+
 	OPAL_THREAD_LOCK(&fp->f_lock);
 	if (data->view_index) {
 		/* flush the previous view */
