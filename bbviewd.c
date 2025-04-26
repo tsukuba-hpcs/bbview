@@ -325,6 +325,8 @@ create_socket(void)
 static void
 listener_loop(int sock_fd)
 {
+	int term_client_fd = -1;
+
 	for (;;) {
 		int cfd = accept(sock_fd, NULL, NULL);
 		if (cfd < 0) {
@@ -333,38 +335,83 @@ listener_loop(int sock_fd)
 			syslog(LOG_ERR, "accept: %s", strerror(errno));
 			break;
 		}
+
 		char buf[PATH_MAX + 16] = {0};
 		ssize_t n = read(cfd, buf, sizeof(buf) - 1);
-		close(cfd);
-		if (n <= 0)
+		if (n <= 0) {
+			close(cfd);
 			continue;
+		}
 		buf[n] = '\0';
+
 		if (!strncmp(buf, "terminate", 9)) {
+			syslog(LOG_INFO, "Received terminate command");
 			shutting_down = 1;
 			pthread_cond_broadcast(&q_cv);
+
+			term_client_fd = cfd;
 			break;
+		} else {
+			char *nl = strchr(buf, '\n');
+			if (nl)
+				*nl = '\0';
+			enqueue(buf);
+			close(cfd);
 		}
-		/* strip trailing newline */
-		char *nl = strchr(buf, '\n');
-		if (nl)
-			*nl = '\0';
-		enqueue(buf);
 	}
-	/* stop accepting */
+
+	if (term_client_fd >= 0) {
+		while (atomic_load(&active_workers) > 0) {
+			usleep(1000);
+		}
+
+		write(term_client_fd, "done\n", 5);
+		close(term_client_fd);
+	}
+
 	close(sock_fd);
 }
 
 int
 main(int argc, char **argv)
 {
+	if (argc < 2) {
+		fprintf(stderr, "Usage: %s <num_threads> | wait\n", argv[0]);
+		return EXIT_FAILURE;
+	}
+
+	if (strcmp(argv[1], "wait") == 0) {
+		int sockfd = socket(AF_UNIX, SOCK_STREAM, 0);
+		if (sockfd < 0) {
+			perror("socket");
+			exit(EXIT_FAILURE);
+		}
+
+		struct sockaddr_un addr = {0};
+		addr.sun_family = AF_UNIX;
+		strncpy(addr.sun_path, BBVIEW_SOCK, sizeof(addr.sun_path) - 1);
+
+		if (connect(sockfd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+			perror("connect");
+			exit(EXIT_FAILURE);
+		}
+
+		write(sockfd, "terminate\n", 10);
+
+		char buf[128] = {0};
+		ssize_t n = read(sockfd, buf, sizeof(buf) - 1);
+		if (n > 0) {
+			buf[n] = '\0';
+			printf("%s", buf);
+		}
+
+		close(sockfd);
+		return 0;
+	}
+
 	if (daemon(0, 0) < 0) {
 		perror("daemon");
 		exit(EXIT_FAILURE);
-	}
-
-	if (argc != 2) {
-		fprintf(stderr, "Usage: %s <num_threads>\n", argv[0]);
-		return EXIT_FAILURE;
 	}
 
 	openlog("bbviewd", LOG_PID | LOG_CONS, LOG_DAEMON);
