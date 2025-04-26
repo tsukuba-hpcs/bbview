@@ -27,6 +27,5 @@ AC_DEFUN([MCA_ompi_io_bbview_CONFIG],[
     AC_DEFINE_UNQUOTED([BBVIEW_TMP_DIR], ["$BBVIEW_TMP_DIR"], [Temporary directory for BBVIEW])
     AC_SUBST([BBVIEW_TMP_DIR])
 
-    AC_CHECK_LIB([uring], [io_uring_queue_init], [],
-        [AC_MSG_ERROR([liburing not found. Please install liburing.])])
+    PKG_CHECK_MODULES([LIBURING], [liburing])
 ])dnl
