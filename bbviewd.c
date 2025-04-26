@@ -15,6 +15,11 @@
 #include <signal.h>
 #include <stdatomic.h>
 #include <syslog.h>
+#include <liburing.h>
+
+#define MAX_BATCH_SIZE (1 << 20)
+#define QUEUE_DEPTH 64
+
 
 #include "io_bbview.h"
 
@@ -77,36 +82,88 @@ static int
 execute(int in_fd, int out_fd, size_t etype_size, size_t blocklength,
 	size_t stride, size_t disp, size_t count)
 {
-	int pipefd[2];
-    if (pipe(pipefd) == -1) {
-        syslog(LOG_ERR, "pipe: %s", strerror(errno));
-        return -1;
-    }
+	struct io_uring ring;
+	int rc;
 
-    for (size_t c = 0; c < count; c++) {
-        off_t src_off = c * blocklength * etype_size;
-        off_t dst_off = disp + c * stride * etype_size;
-        size_t len = blocklength * etype_size;
+	rc = io_uring_queue_init(QUEUE_DEPTH, &ring, 0);
+	if (rc < 0) {
+		syslog(LOG_ERR, "io_uring_queue_init: %s", strerror(-rc));
+		return -1;
+	}
 
-        ssize_t spliced_in = splice(in_fd, &src_off, pipefd[1], NULL, len, 0);
-        if (spliced_in != (ssize_t)len) {
-            syslog(LOG_ERR, "splice(in): %s", strerror(errno));
-            close(pipefd[0]);
-            close(pipefd[1]);
-            return -1;
-        }
+	size_t block_size = blocklength * etype_size;
+	size_t stride_size = stride * etype_size;
 
-        ssize_t spliced_out = splice(pipefd[0], NULL, out_fd, &dst_off, len, 0);
-        if (spliced_out != (ssize_t)len) {
-            syslog(LOG_ERR, "splice(out): %s", strerror(errno));
-            close(pipefd[0]);
-            close(pipefd[1]);
-            return -1;
-        }
-    }
+	char *buffer = malloc(MAX_BATCH_SIZE);
+	if (!buffer) {
+		syslog(LOG_ERR, "malloc: %s", strerror(errno));
+		io_uring_queue_exit(&ring);
+		return -1;
+	}
 
-    close(pipefd[0]);
-    close(pipefd[1]);
+	size_t batch_start_c = 0;
+	size_t batch_blocks = 0;
+	size_t batch_bytes = 0;
+
+	for (size_t c = 0; c < count; ) {
+		batch_start_c = c;
+		batch_blocks = 0;
+		batch_bytes = 0;
+
+		while (c < count && batch_bytes + block_size <= MAX_BATCH_SIZE) {
+			batch_bytes += block_size;
+			batch_blocks++;
+			c++;
+		}
+
+		size_t read_off = batch_start_c * block_size;
+		ssize_t nread = pread(in_fd, buffer, batch_bytes, read_off);
+		if (nread != (ssize_t)batch_bytes) {
+			syslog(LOG_ERR, "pread: %s", strerror(errno));
+			rc = -1;
+			goto cleanup;
+		}
+
+		for (size_t i = 0; i < batch_blocks; i++) {
+			struct io_uring_sqe *sqe = io_uring_get_sqe(&ring);
+			if (!sqe) {
+				io_uring_submit(&ring);
+				sqe = io_uring_get_sqe(&ring);
+				if (!sqe) {
+					syslog(LOG_ERR, "get_sqe failed after submit");
+					rc = -1;
+					goto cleanup;
+				}
+			}
+
+			off_t dst_off = disp + (batch_start_c + i) * stride_size;
+			char *src = buffer + (i * block_size);
+			io_uring_prep_write(sqe, out_fd, src, block_size, dst_off);
+		}
+
+		io_uring_submit(&ring);
+
+		for (size_t i = 0; i < batch_blocks; i++) {
+			struct io_uring_cqe *cqe;
+			rc = io_uring_wait_cqe(&ring, &cqe);
+			if (rc < 0) {
+				syslog(LOG_ERR, "wait_cqe: %s", strerror(-rc));
+				goto cleanup;
+			}
+			if (cqe->res < 0) {
+				syslog(LOG_ERR, "cqe res: %s", strerror(-cqe->res));
+				rc = -1;
+			}
+			io_uring_cqe_seen(&ring, cqe);
+		}
+	}
+
+	rc = 0;
+
+cleanup:
+	free(buffer);
+	io_uring_queue_exit(&ring);
+	return rc;
 }
 
 struct worker_arg {
