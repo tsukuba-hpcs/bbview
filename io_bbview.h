@@ -86,11 +86,10 @@ OMPI_DECLSPEC extern int mca_io_ompio_coll_timing_info;
 
 #define BBVIEW_SOCK "/tmp/bbview.sock"
 #define BBVIEW_ATTR_DEST_PATH "user.bbview.dest_path"
-#define BBVIEW_ATTR_ETYPE_SIZE "user.bbview.etype_size"
-#define BBVIEW_ATTR_BLOCK_LENGTH "user.bbview.blocklength"
-#define BBVIEW_ATTR_STRIDE "user.bbview.stride"
+#define BBVIEW_ATTR_ETYPE "user.bbview.etype"
+#define BBVIEW_ATTR_DATATYPE "user.bbview.datatype"
 #define BBVIEW_ATTR_DISP "user.bbview.disp"
-#define BBVIEW_ATTR_COUNT "user.bbview.count"
+#define BBVIEW_ATTR_PROC "user.bbview.proc"
 
 /*---------------------------*/
 
@@ -116,10 +115,10 @@ struct mca_common_bbview_data_t {
 
    // Original view parameters
    OMPI_MPI_OFFSET_TYPE saved_disp;
-   size_t saved_etype_size;
-   size_t saved_count;
-   size_t saved_blklen;
-   size_t saved_stride;
+   char* saved_dt_buf;
+   size_t saved_dt_len;
+   char *saved_et_buf;
+   size_t saved_et_len;
    char *saved_datarep;
    opal_info_t *saved_info;
    ompi_datatype_t *saved_etype;

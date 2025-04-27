@@ -27,5 +27,4 @@ AC_DEFUN([MCA_ompi_io_bbview_CONFIG],[
     AC_DEFINE_UNQUOTED([BBVIEW_TMP_DIR], ["$BBVIEW_TMP_DIR"], [Temporary directory for BBVIEW])
     AC_SUBST([BBVIEW_TMP_DIR])
 
-    PKG_CHECK_MODULES([LIBURING], [liburing])
 ])dnl

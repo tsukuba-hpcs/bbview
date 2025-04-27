@@ -61,7 +61,12 @@ sources = \
 sbin_PROGRAMS = bbviewd
 
 bbviewd_SOURCES = bbviewd.c
-bbviewd_CFLAGS = $(LIBURING_CFLAGS)
 bbviewd_LDADD = \
-    $(OMPI_TOP_BUILDDIR)/ompi/mca/common/ompio/libmca_common_ompio.la \
-    $(LIBURING_LIBS)
+    $(OMPI_TOP_BUILDDIR)/ompi/libmpi.la \
+    $(OMPI_TOP_BUILDDIR)/opal/libopen-pal.la \
+    $(OMPI_TOP_BUILDDIR)/ompi/mca/common/ompio/libmca_common_ompio.la
+
+bbviewd_DEPENDENCIES = \
+    $(OMPI_TOP_BUILDDIR)/ompi/libmpi.la \
+    $(OMPI_TOP_BUILDDIR)/opal/libopen-pal.la \
+    $(OMPI_TOP_BUILDDIR)/ompi/mca/common/ompio/libmca_common_ompio.la

@@ -15,15 +15,32 @@
 #include <signal.h>
 #include <stdatomic.h>
 #include <syslog.h>
-#include <liburing.h>
+
+#include "ompi_config.h"
+
+#include "ompi/communicator/communicator.h"
+#include "ompi/info/info.h"
+#include "ompi/file/file.h"
+#include "ompi/mca/pml/pml.h"
+#include "opal/datatype/opal_convertor.h"
+#include "ompi/datatype/ompi_datatype.h"
+#include "ompi/instance/instance.h"
+#include "ompi/include/mpi.h"
+#include "opal/mca/base/mca_base_framework.h"
+#include "ompi/mca/io/base/base.h"
+#include "ompi/mca/fs/base/base.h"
+#include "ompi/mca/fcoll/base/base.h"
+#include "ompi/mca/fbtl/base/base.h"
+#include "ompi/mca/sharedfp/base/base.h"
+
 
 #define MAX_BATCH_SIZE (1 << 20)
 #define QUEUE_DEPTH 64
 
-
 #include "io_bbview.h"
 
-struct job {
+struct job
+{
 	char src[PATH_MAX];
 	struct job *next;
 };
@@ -78,95 +95,145 @@ dequeue(char *out)
 	return 1;
 }
 
+#define TARGET_BUFFER_SIZE (4 * 1024 * 1024)
+
 static int
-execute(int in_fd, int out_fd, size_t etype_size, size_t blocklength,
-	size_t stride, size_t disp, size_t count)
+execute(char *src, char *dst)
 {
-	struct io_uring ring;
-	int rc;
+	int src_fd;
+	char *et_buf;
+	char *dt_buf;
+	OMPI_MPI_OFFSET_TYPE disp;
+	int xl;
+	int ret;
+	ompi_file_t *fh;
+	ompi_datatype_t *etype = NULL;
+	ompi_datatype_t *dtype = NULL;
+	size_t etype_size;
+	void *buf = NULL;
+	size_t buf_size;
+	pmix_data_buffer_t *proc = NULL;
+	char proc_buf[PATH_MAX];
+	size_t proc_len;
+	ompi_proc_t **p;
 
-	rc = io_uring_queue_init(QUEUE_DEPTH, &ring, 0);
-	if (rc < 0) {
-		syslog(LOG_ERR, "io_uring_queue_init: %s", strerror(-rc));
+	src_fd = open(src, O_RDONLY);
+	if (src_fd < 0) {
+		syslog(LOG_ERR, "open: %s", strerror(errno));
 		return -1;
 	}
 
-	size_t block_size = blocklength * etype_size;
-	size_t stride_size = stride * etype_size;
+	et_buf = malloc(PATH_MAX);
+	if ((xl = fgetxattr(src_fd, BBVIEW_ATTR_ETYPE, et_buf, PATH_MAX)) < 0) {
+		syslog(LOG_ERR, "missing xattr %s on %s: %s", BBVIEW_ATTR_ETYPE, src, strerror(errno));
+		goto err_close;
+	}
+	dt_buf = malloc(PATH_MAX);
+	if ((xl = fgetxattr(src_fd, BBVIEW_ATTR_DATATYPE, dt_buf, PATH_MAX)) < 0) {
+		syslog(LOG_ERR, "missing xattr %s on %s: %s", BBVIEW_ATTR_DATATYPE, src, strerror(errno));
+		goto err_close;
+	}
+	if ((xl = fgetxattr(src_fd, BBVIEW_ATTR_DISP, &disp, sizeof(disp))) < 0) {
+		syslog(LOG_ERR, "missing xattr %s on %s: %s", BBVIEW_ATTR_DISP, src, strerror(errno));
+		goto err_close;
+	}
+	if ((xl = fgetxattr(src_fd, BBVIEW_ATTR_PROC, proc_buf, sizeof(proc_buf))) < 0) {
+		syslog(LOG_ERR, "missing xattr %s on %s: %s", BBVIEW_ATTR_PROC, src, strerror(errno));
+		goto err_close;
+	}
+	PMIX_DATA_BUFFER_CREATE(proc);
+	PMIX_DATA_BUFFER_LOAD(proc, proc_buf, xl);
+	if (!proc) {
+		syslog(LOG_ERR, "PMIX_DATA_BUFFER_LOAD failed");
+		goto err_close;
+	}
+	ret = ompi_proc_unpack(proc, 1, &p, NULL, NULL);
+	if (ret != OMPI_SUCCESS) {
+		syslog(LOG_ERR, "ompi_proc_unpack failed");
+		goto err_proc;
+	}
+	p[0]->super.proc_flags = OPAL_PROC_NON_LOCAL;
 
-	char *buffer = malloc(MAX_BATCH_SIZE);
-	if (!buffer) {
-		syslog(LOG_ERR, "malloc: %s", strerror(errno));
-		io_uring_queue_exit(&ring);
-		return -1;
+	etype = ompi_datatype_create_from_packed_description((void **)&et_buf, p[0]);
+	if (etype == NULL) {
+		syslog(LOG_ERR, "ompi_datatype_create_from_packed_description(etype) failed");
+		goto err_proc;
+	}
+	dtype = ompi_datatype_create_from_packed_description((void **)&dt_buf, p[0]);
+	if (dtype == NULL) {
+		syslog(LOG_ERR, "ompi_datatype_create_from_packed_description(dtype) failed");
+		goto err_proc;
 	}
 
-	size_t batch_start_c = 0;
-	size_t batch_blocks = 0;
-	size_t batch_bytes = 0;
+	ret = ompi_datatype_type_size(etype, &etype_size);
+	if (ret != OMPI_SUCCESS) {
+		syslog(LOG_ERR, "ompi_datatype_type_size failed");
+		goto err_proc;
+	}
 
-	for (size_t c = 0; c < count; ) {
-		batch_start_c = c;
-		batch_blocks = 0;
-		batch_bytes = 0;
+	size_t etypes_per_buffer = (TARGET_BUFFER_SIZE + etype_size - 1) / etype_size;
+	buf_size = etypes_per_buffer * etype_size;
 
-		while (c < count && batch_bytes + block_size <= MAX_BATCH_SIZE) {
-			batch_bytes += block_size;
-			batch_blocks++;
-			c++;
+	buf = malloc(buf_size);
+	if (!buf) {
+		syslog(LOG_ERR, "malloc failed");
+		goto err_proc;
+	}
+
+	ret = ompi_file_open((struct ompi_communicator_t *)&ompi_mpi_comm_world, dst, OMPIO_MODE_WRONLY, (struct opal_info_t *)&ompi_mpi_info_null, &fh);
+	if (ret != OMPI_SUCCESS) {
+		syslog(LOG_ERR, "ompi_file_open failed");
+		goto err_free;
+	}
+
+	ret = mca_io_ompio_file_set_view(fh, disp, etype, dtype, "native", (struct opal_info_t *)&ompi_mpi_info_null);
+	if (ret != OMPI_SUCCESS) {
+		syslog(LOG_ERR, "ompi_file_set_view failed");
+		goto err_fclose;
+	}
+
+	ssize_t rsize;
+	while ((rsize = read(src_fd, buf, buf_size)) > 0) {
+		if (rsize % etype_size != 0) {
+			syslog(LOG_WARNING, "partial etype read: rsize=%ld etype_size=%ld", (long)rsize, (long)etype_size);
+			rsize -= (rsize % etype_size);
 		}
 
-		size_t read_off = batch_start_c * block_size;
-		ssize_t nread = pread(in_fd, buffer, batch_bytes, read_off);
-		if (nread != (ssize_t)batch_bytes) {
-			syslog(LOG_ERR, "pread: %s", strerror(errno));
-			rc = -1;
-			goto cleanup;
-		}
+		if (rsize == 0)
+			continue;
 
-		for (size_t i = 0; i < batch_blocks; i++) {
-			struct io_uring_sqe *sqe = io_uring_get_sqe(&ring);
-			if (!sqe) {
-				io_uring_submit(&ring);
-				sqe = io_uring_get_sqe(&ring);
-				if (!sqe) {
-					syslog(LOG_ERR, "get_sqe failed after submit");
-					rc = -1;
-					goto cleanup;
-				}
-			}
+		int count = rsize / etype_size;
 
-			off_t dst_off = disp + (batch_start_c + i) * stride_size;
-			char *src = buffer + (i * block_size);
-			io_uring_prep_write(sqe, out_fd, src, block_size, dst_off);
-		}
-
-		io_uring_submit(&ring);
-
-		for (size_t i = 0; i < batch_blocks; i++) {
-			struct io_uring_cqe *cqe;
-			rc = io_uring_wait_cqe(&ring, &cqe);
-			if (rc < 0) {
-				syslog(LOG_ERR, "wait_cqe: %s", strerror(-rc));
-				goto cleanup;
-			}
-			if (cqe->res < 0) {
-				syslog(LOG_ERR, "cqe res: %s", strerror(-cqe->res));
-				rc = -1;
-			}
-			io_uring_cqe_seen(&ring, cqe);
+		ret = mca_io_ompio_file_write(fh, buf, count, etype, MPI_STATUS_IGNORE);
+		if (ret != OMPI_SUCCESS) {
+			syslog(LOG_ERR, "ompi_file_write failed");
+			goto err_fclose;
 		}
 	}
 
-	rc = 0;
+	if (rsize < 0) {
+		syslog(LOG_ERR, "read error: %s", strerror(errno));
+		goto err_fclose;
+	}
 
-cleanup:
-	free(buffer);
-	io_uring_queue_exit(&ring);
-	return rc;
+	ompi_file_close(&fh);
+	free(buf);
+	close(src_fd);
+	return 0;
+
+err_fclose:
+	ompi_file_close(&fh);
+err_free:
+	free(buf);
+err_proc:
+	PMIX_DATA_BUFFER_RELEASE(proc);
+err_close:
+	close(src_fd);
+	return -1;
 }
 
-struct worker_arg {
+struct worker_arg
+{
 	int id;
 };
 
@@ -182,114 +249,23 @@ worker_fn(void *arg)
 		/* obtain destination path from xattr */
 		char dst[PATH_MAX];
 		ssize_t xl;
-		char buf[PATH_MAX];
-		size_t etype_size = 0, blocklength = 0, stride = 0, disp = 0,
-		       count = 0;
-		int in_fd, out_fd;
 		int rc;
 		struct stat st;
 
 		if ((xl = getxattr(path, BBVIEW_ATTR_DEST_PATH, dst,
-				   sizeof(dst) - 1)) < 0) {
+						   sizeof(dst) - 1)) < 0) {
 			syslog(LOG_ERR,
-			       "[worker %d] missing xattr %s on %s: %s\n",
-			       w->id, BBVIEW_ATTR_DEST_PATH, path, strerror(errno));
+				   "[worker %d] missing xattr %s on %s: %s\n",
+				   w->id, BBVIEW_ATTR_DEST_PATH, path, strerror(errno));
 			continue;
 		}
 		dst[xl] = '\0';
 		if (stat(dst, &st) < 0) {
 			syslog(LOG_ERR, "[worker %d] stat %s: %s\n", w->id, dst,
-			       strerror(errno));
+				   strerror(errno));
 			continue;
 		}
-
-		in_fd = open(path, O_RDONLY, 0);
-		out_fd = open(dst, O_WRONLY, 0);
-		if (in_fd < 0 || out_fd < 0) {
-			syslog(LOG_ERR, "open: %s", strerror(errno));
-			goto cont;
-		}
-
-		if ((xl = fgetxattr(in_fd, BBVIEW_ATTR_ETYPE_SIZE, buf,
-				    sizeof(buf) - 1)) < 0) {
-			syslog(LOG_ERR,
-			       "[worker %d] missing xattr %s on %s: %s\n",
-			       w->id, BBVIEW_ATTR_ETYPE_SIZE, path, strerror(errno));
-			goto cont;
-		}
-		buf[xl] = '\0';
-		sscanf(buf, "%zu", &etype_size);
-		if (etype_size == 0) {
-			syslog(LOG_ERR,
-			       "[worker %d] invalid etype size %s on %s\n",
-			       w->id, buf, path);
-			goto cont;
-		}
-		if ((xl = fgetxattr(in_fd, BBVIEW_ATTR_BLOCK_LENGTH, buf,
-				    sizeof(buf) - 1)) < 0) {
-			syslog(LOG_ERR,
-			       "[worker %d] missing xattr %s on %s: %s\n",
-			       w->id, BBVIEW_ATTR_BLOCK_LENGTH, path, strerror(errno));
-			goto cont;
-		}
-		buf[xl] = '\0';
-		sscanf(buf, "%zu", &blocklength);
-		if (blocklength == 0) {
-			syslog(LOG_ERR,
-			       "[worker %d] invalid block length %s on %s\n",
-			       w->id, buf, path);
-			goto cont;
-		}
-		if ((xl = fgetxattr(in_fd, BBVIEW_ATTR_STRIDE, buf, sizeof(buf) - 1)) <
-		    0) {
-			syslog(LOG_ERR,
-			       "[worker %d] missing xattr %s on %s: %s\n",
-			       w->id, BBVIEW_ATTR_STRIDE, path, strerror(errno));
-			goto cont;
-		}
-		buf[xl] = '\0';
-		sscanf(buf, "%zu", &stride);
-		if (stride == 0) {
-			syslog(LOG_ERR, "[worker %d] invalid stride %s on %s\n",
-			       w->id, buf, path);
-			goto cont;
-		}
-		if ((xl = fgetxattr(in_fd, BBVIEW_ATTR_DISP, buf, sizeof(buf) - 1)) <
-		    0) {
-			syslog(LOG_ERR,
-			       "[worker %d] missing xattr %s on %s: %s\n",
-			       w->id, BBVIEW_ATTR_DISP, path, strerror(errno));
-			goto cont;
-		}
-		buf[xl] = '\0';
-		sscanf(buf, "%zu", &disp);
-		if ((xl = fgetxattr(in_fd, BBVIEW_ATTR_COUNT, buf, sizeof(buf) - 1)) <
-		    0) {
-			syslog(LOG_ERR,
-			       "[worker %d] missing xattr %s on %s: %s\n",
-			       w->id, BBVIEW_ATTR_COUNT, path, strerror(errno));
-			goto cont;
-		}
-		buf[xl] = '\0';
-		sscanf(buf, "%zu", &count);
-		if (count == 0) {
-			syslog(LOG_ERR, "[worker %d] invalid count %s on %s\n",
-			       w->id, buf, path);
-			goto cont;
-		}
-		rc = execute(in_fd, out_fd, etype_size, blocklength, stride,
-			     disp, count);
-
-		if (!rc) {
-			syslog(LOG_INFO,
-			       "[worker %d] %s -> %s (%lu bytes) OK\n", w->id,
-			       path, dst, count * blocklength * etype_size);
-		}
-	cont:
-		if (in_fd >= 0)
-			close(in_fd);
-		if (out_fd >= 0)
-			close(out_fd);
+		execute(path, dst);
 		continue;
 	}
 
@@ -372,9 +348,10 @@ listener_loop(int sock_fd)
 	close(sock_fd);
 }
 
-int
-main(int argc, char **argv)
+int main(int argc, char **argv)
 {
+	int provided;
+	int ret;
 	if (argc < 2) {
 		fprintf(stderr, "Usage: %s <num_threads> | wait\n", argv[0]);
 		return EXIT_FAILURE;
@@ -408,11 +385,34 @@ main(int argc, char **argv)
 		close(sockfd);
 		return 0;
 	}
-
+	/*
 	if (daemon(0, 0) < 0) {
 		perror("daemon");
 		exit(EXIT_FAILURE);
+	} */
+
+	MPI_Init_thread(&argc, &argv, MPI_THREAD_MULTIPLE, &provided);
+	if (OMPI_SUCCESS != (ret = mca_base_framework_open(&ompi_fs_base_framework, 0))) {
+		syslog(LOG_ERR, "Failed to open fs components");
+		exit(EXIT_FAILURE);
 	}
+	if (OMPI_SUCCESS != (ret = mca_base_framework_open(&ompi_fcoll_base_framework, 0))) {
+		syslog(LOG_ERR, "Failed to open fcoll components");
+		exit(EXIT_FAILURE);
+	}
+	if (OMPI_SUCCESS != (ret = mca_base_framework_open(&ompi_fbtl_base_framework, 0))) {
+		syslog(LOG_ERR, "Failed to open fbtl components");
+		exit(EXIT_FAILURE);
+	}
+	if (OMPI_SUCCESS != (ret = mca_base_framework_open(&ompi_sharedfp_base_framework, 0))) {
+		syslog(LOG_ERR, "Failed to open sharedfp components");
+		exit(EXIT_FAILURE);
+	}
+	if (OMPI_SUCCESS != (ret = mca_base_framework_open(&ompi_io_base_framework, 0))) {
+		syslog(LOG_ERR, "Failed to open io components");
+		exit(EXIT_FAILURE);
+	}
+
 
 	openlog("bbviewd", LOG_PID | LOG_CONS, LOG_DAEMON);
 

@@ -43,6 +43,11 @@
 static int set_xattrs_for_bbview(const char *path, mca_common_bbview_data_t *data)
 {
     char buf[PATH_MAX];
+    pmix_data_buffer_t *proc = NULL;
+    ompi_proc_t *local = ompi_proc_local();
+    int rc;
+    char *proc_buf;
+    size_t proc_len;
 
     if (realpath(data->ompio_fh.f_filename, buf) == NULL) {
         perror("realpath");
@@ -50,22 +55,30 @@ static int set_xattrs_for_bbview(const char *path, mca_common_bbview_data_t *dat
     }
     setxattr(path, BBVIEW_ATTR_DEST_PATH, buf, strlen(buf), 0);
 
-    snprintf(buf, sizeof(buf), "%ld", (long)data->saved_etype_size);
-    setxattr(path, BBVIEW_ATTR_ETYPE_SIZE, buf, strlen(buf), 0);
+    setxattr(path, BBVIEW_ATTR_DISP, &data->saved_disp, sizeof(data->saved_disp), 0);
 
+    setxattr(path, BBVIEW_ATTR_DATATYPE, data->saved_dt_buf, data->saved_dt_len, 0);
+    setxattr(path, BBVIEW_ATTR_ETYPE, data->saved_et_buf, data->saved_et_len, 0);
 
-    snprintf(buf, sizeof(buf), "%ld", (long)data->saved_disp);
-    setxattr(path, BBVIEW_ATTR_DISP, buf, strlen(buf), 0);
-
-    snprintf(buf, sizeof(buf), "%ld", (long)data->saved_blklen);
-    setxattr(path, BBVIEW_ATTR_BLOCK_LENGTH, buf, strlen(buf), 0);
-
-    snprintf(buf, sizeof(buf), "%ld", (long)data->saved_stride);
-    setxattr(path, BBVIEW_ATTR_STRIDE, buf, strlen(buf), 0);
-
-    snprintf(buf, sizeof(buf), "%ld", data->saved_count);
-    setxattr(path, BBVIEW_ATTR_COUNT, buf, strlen(buf), 0);
-
+    PMIX_DATA_BUFFER_CREATE(proc);
+    if (proc == NULL) {
+        fprintf(stderr, "Failed to create data buffer\n");
+        return -1;
+    }
+    rc = ompi_proc_pack(&local, 1, proc);
+    if (rc != OMPI_SUCCESS) {
+        fprintf(stderr, "Failed to pack proc\n");
+        PMIX_DATA_BUFFER_RELEASE(proc);
+        return -1;
+    }
+    PMIX_DATA_BUFFER_UNLOAD(proc, proc_buf, proc_len);
+    if (proc_buf == NULL) {
+        fprintf(stderr, "Failed to unload proc buffer\n");
+        PMIX_DATA_BUFFER_RELEASE(proc);
+        return -1;
+    }
+    setxattr(path, BBVIEW_ATTR_PROC, proc_buf, proc_len, 0);
+    PMIX_DATA_BUFFER_RELEASE(proc);
     return 0;
 }
 
