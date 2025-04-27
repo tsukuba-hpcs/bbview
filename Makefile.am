@@ -64,5 +64,4 @@ bbviewd_SOURCES = bbviewd.c
 bbviewd_CFLAGS = $(LIBURING_CFLAGS)
 bbviewd_LDADD = \
     $(OMPI_TOP_BUILDDIR)/ompi/mca/common/ompio/libmca_common_ompio.la \
-    $(top_builddir)/ompi/libmpi.la \
     $(LIBURING_LIBS)
