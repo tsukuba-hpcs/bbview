@@ -32,6 +32,7 @@
 #include <stdio.h>
 
 #include <unistd.h>
+#include <strings.h> 
 #include "io_bbview.h"
 
 static int datatype_duplicate(ompi_datatype_t *oldtype,
@@ -56,6 +57,285 @@ datatype_duplicate(ompi_datatype_t *oldtype, ompi_datatype_t **newtype)
 
 	*newtype = type;
 	return OMPI_SUCCESS;
+}
+
+static bool enable_directio(ompi_datatype_t *filetype,
+	int pagesize, int threshold)
+{
+	int ni, na, nd, combiner;
+	int ret;
+	int *i = NULL;
+	MPI_Aint *a = NULL;
+	ompi_datatype_t **d = NULL;
+	ret = PMPI_Type_get_envelope(filetype, &ni, &na, &nd, &combiner);
+    if(ret != MPI_SUCCESS)
+		return false;
+	i = malloc(sizeof(int) * ni);
+	a = malloc(sizeof(MPI_Aint) * na);
+	d = malloc(sizeof(ompi_datatype_t *) * nd);
+
+	switch (combiner) {
+	case MPI_COMBINER_NAMED: {
+		int size;
+		ret = PMPI_Type_size(filetype, &size);
+		if (ret != MPI_SUCCESS)
+			goto disable;
+		if (size == 0)
+			goto disable;
+		if (size % pagesize != 0 || size < threshold)
+			goto disable;
+		goto enable;
+	}
+	case MPI_COMBINER_DUP: {
+		ret = PMPI_Type_get_contents(filetype, ni, na, nd,
+					      i, a, d);
+		if (ret != MPI_SUCCESS)
+			goto disable;
+		ret = enable_directio(d[0], pagesize, threshold);
+		if (ret)
+			goto enable;
+		goto disable;
+	}
+	case MPI_COMBINER_CONTIGUOUS: {
+		int count;
+		int size;
+		ret = PMPI_Type_get_contents(filetype, ni, na, nd,
+					      i, a, d);
+		if (ret != MPI_SUCCESS)
+			goto disable;
+		count = i[0];
+		if (count == 0)
+			goto disable;
+		ret = enable_directio(d[0], pagesize, threshold);
+		if (ret)
+			goto enable;
+		ret = PMPI_Type_get_envelope(d[0], &ni, &na, &nd, &combiner);
+		if (ret != MPI_SUCCESS)
+			goto disable;
+		if (combiner != MPI_COMBINER_NAMED)
+			goto disable;
+		ret = PMPI_Type_size(d[0], &size);
+		if (ret != MPI_SUCCESS)
+			goto disable;
+		if (size == 0)
+			goto disable;
+		if ((size * count) % pagesize != 0 || (size * count) < threshold)
+			goto disable;
+		goto enable;
+	}
+	case MPI_COMBINER_VECTOR:
+	case MPI_COMBINER_HVECTOR: {
+		int size;
+		ret = PMPI_Type_get_contents(filetype, ni, na, nd,
+					      i, a, d);
+		if (ret != MPI_SUCCESS)
+			goto disable;
+		if (i[0] == 0)
+			goto disable;
+		ret = enable_directio(d[0], pagesize, threshold);
+		if (ret)
+			goto enable;
+		ret = PMPI_Type_get_envelope(d[0], &ni, &na, &nd, &combiner);
+		if (ret != MPI_SUCCESS)
+			goto disable;
+		if (combiner != MPI_COMBINER_NAMED)
+			goto disable;
+		ret = PMPI_Type_size(d[0], &size);
+		if (ret != MPI_SUCCESS)
+			goto disable;
+		if (size == 0)
+			goto disable;
+		if ((size * i[1]) % pagesize != 0 || (size * i[1]) < threshold)
+			goto disable;
+		goto enable;
+	}
+	case MPI_COMBINER_INDEXED:
+	case MPI_COMBINER_HINDEXED: {
+		int size;
+		ret = PMPI_Type_get_contents(filetype, ni, na, nd,
+					      i, a, d);
+		if (ret != MPI_SUCCESS)
+			goto disable;
+		if (i[0] == 0)
+			goto disable;
+		ret = enable_directio(d[0], pagesize, threshold);
+		if (ret)
+			goto enable;
+		ret = PMPI_Type_get_envelope(d[0], &ni, &na, &nd, &combiner);
+		if (ret != MPI_SUCCESS)
+			goto disable;
+		if (combiner != MPI_COMBINER_NAMED)
+			goto disable;
+		ret = PMPI_Type_size(d[0], &size);
+		if (ret != MPI_SUCCESS)
+			goto disable;
+		if (size == 0)
+			goto disable;
+		for (int c = 0; c < i[0]; c++) {
+			if ((size * i[c+1]) % pagesize != 0 || 
+			    (size * i[c+1]) < threshold)
+				goto disable;
+		}
+		goto enable;
+	}
+	case MPI_COMBINER_INDEXED_BLOCK:
+	case MPI_COMBINER_HINDEXED_BLOCK: {
+		int size;
+		ret = PMPI_Type_get_contents(filetype, ni, na, nd,
+					      i, a, d);
+		if (ret != MPI_SUCCESS)
+			goto disable;
+		if (i[0] == 0)
+			goto disable;
+		ret = enable_directio(d[0], pagesize, threshold);
+		if (ret)
+			goto enable;
+		ret = PMPI_Type_get_envelope(d[0], &ni, &na, &nd, &combiner);
+		if (ret != MPI_SUCCESS)
+			goto disable;
+		if (combiner != MPI_COMBINER_NAMED)
+			goto disable;
+		ret = PMPI_Type_size(d[0], &size);
+		if (ret != MPI_SUCCESS)
+			goto disable;
+		if (size == 0)
+			goto disable;
+		if ((size * i[1]) % pagesize != 0 || 
+		    (size * i[1]) < threshold)
+			goto disable;
+		goto enable;
+	}
+	case MPI_COMBINER_STRUCT: {
+		int size;
+		ret = PMPI_Type_get_contents(filetype, ni, na, nd,
+					      i, a, d);
+		if (ret != MPI_SUCCESS)
+			goto disable;
+		if (i[0] == 0)
+			goto disable;
+		for (int c = 0; c < i[0]; c++) {
+			if (enable_directio(d[c], pagesize, threshold))
+				continue;
+			ret = PMPI_Type_get_envelope(d[c], &ni, &na, &nd,
+						     &combiner);
+			if (ret != MPI_SUCCESS)
+				goto disable;
+			if (combiner != MPI_COMBINER_NAMED)
+				goto disable;
+			ret = PMPI_Type_size(d[c], &size);
+			if (ret != MPI_SUCCESS)
+				goto disable;
+			if (size == 0)
+				goto disable;
+			if ((size * i[c+1]) % pagesize != 0 ||
+			    (size * i[c+1]) < threshold)
+				goto disable;
+		}
+		goto enable;
+	}
+	case MPI_COMBINER_SUBARRAY: {
+		int size;
+		int order;
+		ret = PMPI_Type_get_contents(filetype, ni, na, nd,
+					      i, a, d);
+		if (ret != MPI_SUCCESS)
+			goto disable;
+		if (i[0] == 0)
+			goto disable;
+		ret = enable_directio(d[0], pagesize, threshold);
+		if (ret)
+			goto enable;
+		ret = PMPI_Type_get_envelope(d[0], &ni, &na, &nd, &combiner);
+		if (ret != MPI_SUCCESS)
+			goto disable;
+		if (combiner != MPI_COMBINER_NAMED)
+			goto disable;
+		ret = PMPI_Type_size(d[0], &size);
+		if (ret != MPI_SUCCESS)
+			goto disable;
+		if (size == 0)
+			goto disable;
+		order = i[3*i[0]+1];
+		if (order == MPI_ORDER_C) {
+			if ((size * i[2*i[0]]) % pagesize != 0 ||
+			    (size * i[2*i[0]]) < threshold)
+				goto disable;
+		} else if (order == MPI_ORDER_FORTRAN) {
+			if ((size * i[i[0]+1]) % pagesize != 0 ||
+			    (size * i[i[0]+1]) < threshold)
+				goto disable;
+		} else {
+			goto disable;
+		}
+		goto enable;
+	}
+	case MPI_COMBINER_DARRAY: {
+		int size;
+		int order;
+		int ndims;
+		int dim;
+		int distrib;
+		ret = PMPI_Type_get_contents(filetype, ni, na, nd,
+					      i, a, d);
+		if (ret != MPI_SUCCESS)
+			goto disable;
+		if (i[0] == 0)
+			goto disable;
+		ret = enable_directio(d[0], pagesize, threshold);
+		if (ret)
+			goto enable;
+		ret = PMPI_Type_get_envelope(d[0], &ni, &na, &nd, &combiner);
+		if (ret != MPI_SUCCESS)
+			goto disable;
+		if (combiner != MPI_COMBINER_NAMED)
+			goto disable;
+		ret = PMPI_Type_size(d[0], &size);
+		if (ret != MPI_SUCCESS)
+			goto disable;
+		if (size == 0)
+			goto disable;
+		order = i[4*i[2]+3];
+		ndims = i[2];
+		if (order == MPI_ORDER_C)
+			dim = ndims - 1;
+		else if (order == MPI_ORDER_FORTRAN)
+			dim = 0;
+		else
+			goto disable;
+		distrib = i[ndims+3 + dim];
+		if (distrib == MPI_DISTRIBUTE_NONE) {
+			if ((size * i[3 + dim]) % pagesize != 0 ||
+			    (size * i[3 + dim]) < threshold)
+				goto disable;
+			goto enable;
+		} else if ( distrib == MPI_DISTRIBUTE_BLOCK) {
+			int darg = i[2*ndims+3 + dim];
+			int block_size = (darg == MPI_DISTRIBUTE_DFLT_DARG) ?
+				(i[3 + dim] / i[3*ndims+3+dim]) : darg;
+			if ((size * block_size) % pagesize != 0 ||
+			    (size * block_size) < threshold)
+				goto disable;
+			goto enable;
+		} else {
+			goto disable;
+		}
+	}
+	case MPI_COMBINER_F90_REAL:
+	case MPI_COMBINER_F90_COMPLEX:
+	case MPI_COMBINER_F90_INTEGER:
+	case MPI_COMBINER_RESIZED:
+	    goto disable;
+	}
+enable:
+	free(i);
+	free(a);
+	free(d);
+	return true;
+disable:
+	free(i);
+	free(a);
+	free(d);
+	return false;
 }
 
 int
@@ -150,9 +430,20 @@ mca_io_bbview_file_set_view(ompi_file_t *fp, OMPI_MPI_OFFSET_TYPE disp,
 			local_filename[i] = '-';
 	}
 	int flags = O_RDWR | O_CREAT | O_TRUNC;
-
-	if (extent % 4096 == 0) {
+	if (enable_directio(filetype, 4096, 1024*1024))
 		flags |= O_DIRECT;
+	opal_cstring_t *dio_buf = NULL;
+	int dio_set = 0;
+	opal_info_get(info, "direct_io", &dio_buf,
+                                &dio_set);
+	if (dio_set) {
+		if (strcasecmp(dio_buf->string, "true") == 0 || strcmp(dio_buf->string, "1") == 0) {
+			flags |= O_DIRECT;
+		} else if (strcasecmp(dio_buf->string, "false") == 0 || strcmp(dio_buf->string, "0") == 0) {
+			flags &= ~O_DIRECT;
+		}
+	}
+	if (flags & O_DIRECT) {
 		fprintf(stderr, "Using O_DIRECT for %s\n", local_filename);
 	} else {
 		fprintf(stderr, "Not using O_DIRECT for %s\n", local_filename);
