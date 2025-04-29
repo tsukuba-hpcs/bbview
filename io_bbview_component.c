@@ -292,6 +292,7 @@ file_query(struct ompi_file_t *file, struct mca_io_base_file_t **private_data,
 		return NULL;
 	}
 	data->view_index = 0;
+	data->saved_info = ompi_info_allocate();
 
 	*private_data = (struct mca_io_base_file_t *)data;
 

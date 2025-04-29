@@ -437,11 +437,12 @@ mca_io_bbview_file_set_view(ompi_file_t *fp, OMPI_MPI_OFFSET_TYPE disp,
 	opal_info_get(info, "direct_io", &dio_buf,
                                 &dio_set);
 	if (dio_set) {
-		if (strcasecmp(dio_buf->string, "true") == 0 || strcmp(dio_buf->string, "1") == 0) {
+		bool rc;
+		ret = opal_cstring_to_bool(dio_buf, &rc);
+		if (ret == OPAL_SUCCESS && rc)
 			flags |= O_DIRECT;
-		} else if (strcasecmp(dio_buf->string, "false") == 0 || strcmp(dio_buf->string, "0") == 0) {
+		else
 			flags &= ~O_DIRECT;
-		}
 	}
 	if (flags & O_DIRECT) {
 		fprintf(stderr, "Using O_DIRECT for %s\n", local_filename);
