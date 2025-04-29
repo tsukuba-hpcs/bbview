@@ -117,6 +117,8 @@ execute(char *src, char *dst)
 	size_t proc_len;
 	ompi_proc_t **p;
 
+	syslog(LOG_INFO, "bbviewd: begin %s -> %s", src, dst);
+
 	src_fd = open(src, O_RDONLY);
 	if (src_fd < 0) {
 		syslog(LOG_ERR, "open: %s", strerror(errno));
@@ -219,6 +221,7 @@ execute(char *src, char *dst)
 	ompi_file_close(&fh);
 	free(buf);
 	close(src_fd);
+	syslog(LOG_INFO, "bbviewd: end %s -> %s", src, dst);
 	return 0;
 
 err_fclose:
