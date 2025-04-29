@@ -180,7 +180,7 @@ execute(char *src, char *dst)
 		goto err_proc;
 	}
 
-	ret = ompi_file_open((struct ompi_communicator_t *)&ompi_mpi_comm_world, dst, OMPIO_MODE_WRONLY, (struct opal_info_t *)&ompi_mpi_info_null, &fh);
+	ret = ompi_file_open((struct ompi_communicator_t *)&ompi_mpi_comm_self, dst, OMPIO_MODE_WRONLY, (struct opal_info_t *)&ompi_mpi_info_null, &fh);
 	if (ret != OMPI_SUCCESS) {
 		syslog(LOG_ERR, "ompi_file_open failed");
 		goto err_free;
