@@ -385,11 +385,11 @@ int main(int argc, char **argv)
 		close(sockfd);
 		return 0;
 	}
-	/*
+
 	if (daemon(0, 0) < 0) {
 		perror("daemon");
 		exit(EXIT_FAILURE);
-	} */
+	}
 
 	MPI_Init_thread(&argc, &argv, MPI_THREAD_MULTIPLE, &provided);
 	if (OMPI_SUCCESS != (ret = mca_base_framework_open(&ompi_fs_base_framework, 0))) {

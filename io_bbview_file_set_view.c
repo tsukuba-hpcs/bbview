@@ -430,7 +430,7 @@ mca_io_bbview_file_set_view(ompi_file_t *fp, OMPI_MPI_OFFSET_TYPE disp,
 			local_filename[i] = '-';
 	}
 	int flags = O_RDWR | O_CREAT | O_TRUNC;
-	if (enable_directio(filetype, 4096, 1024*1024))
+	if (enable_directio(filetype, 4096, 512*1024))
 		flags |= O_DIRECT;
 	opal_cstring_t *dio_buf = NULL;
 	int dio_set = 0;
