@@ -291,6 +291,7 @@ file_query(struct ompi_file_t *file, struct mca_io_base_file_t **private_data,
 	if (NULL == data) {
 		return NULL;
 	}
+	data->state = BBVIEW_STATE_DEFAULT;
 	data->view_index = 0;
 	data->saved_info = ompi_info_allocate();
 

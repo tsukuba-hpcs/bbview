@@ -35,6 +35,8 @@
 #include <strings.h> 
 #include "io_bbview.h"
 
+extern struct ompi_predefined_datatype_t ompi_mpi_byte;
+
 static int datatype_duplicate(ompi_datatype_t *oldtype,
 			      ompi_datatype_t **newtype);
 static int
@@ -367,17 +369,31 @@ mca_io_bbview_file_set_view(ompi_file_t *fp, OMPI_MPI_OFFSET_TYPE disp,
 		return MPI_ERR_DISP;
 	}
 
-	if (fh->f_atomicity ||
-		(fp->f_amode & MPI_MODE_RDONLY) ||
-		(fp->f_amode & MPI_MODE_RDWR)) {
-		OPAL_THREAD_LOCK(&fp->f_lock);
+	OPAL_THREAD_LOCK(&fp->f_lock);
+
+	if (disp == 0 && etype == &ompi_mpi_byte.dt && 
+	    filetype == &ompi_mpi_byte.dt) {
+		if (data->state == BBVIEW_STATE_ACTIVE) {
+			ret = mca_io_bbview_file_flush(fp);
+			if (OMPI_SUCCESS != ret) {
+				OPAL_THREAD_UNLOCK(&fp->f_lock);
+				return ret;
+			}
+			data->saved_datarep = NULL;
+			data->saved_info = NULL;
+		}
+		if (data->state != BBVIEW_STATE_FALLBACK)
+			data->state = BBVIEW_STATE_DEFAULT;
 		ret = mca_common_ompio_set_view(fh, disp, etype, filetype, datarep, info);
 		OPAL_THREAD_UNLOCK(&fp->f_lock);
 		return ret;
 	}
 
-	OPAL_THREAD_LOCK(&fp->f_lock);
-	if (data->view_index) {
+	if (data->state == BBVIEW_STATE_FALLBACK) {
+		ret = mca_common_ompio_set_view(fh, disp, etype, filetype, datarep, info);
+		OPAL_THREAD_UNLOCK(&fp->f_lock);
+		return ret;
+	} else if (data->state == BBVIEW_STATE_ACTIVE) {
 		/* flush the previous view */
 		ret = mca_io_bbview_file_flush(fp);
 		if (OMPI_SUCCESS != ret) {

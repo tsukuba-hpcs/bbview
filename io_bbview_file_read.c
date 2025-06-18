@@ -62,6 +62,8 @@ mca_io_bbview_file_read(ompi_file_t *fp, void *buf, size_t count,
 	mca_common_bbview_data_t *data;
 
 	data = (mca_common_bbview_data_t *)fp->f_io_selected_data;
+	if (data->state == BBVIEW_STATE_ACTIVE)
+		return OMPI_ERR_NOT_SUPPORTED;
 	OPAL_THREAD_LOCK(&fp->f_lock);
 	ret = mca_common_ompio_file_read(&data->ompio_fh, buf, count, datatype,
 					 status);
@@ -80,6 +82,8 @@ mca_io_bbview_file_read_at(ompi_file_t *fh, OMPI_MPI_OFFSET_TYPE offset,
 	mca_common_bbview_data_t *data;
 
 	data = (mca_common_bbview_data_t *)fh->f_io_selected_data;
+	if (data->state == BBVIEW_STATE_ACTIVE)
+		return OMPI_ERR_NOT_SUPPORTED;
 	OPAL_THREAD_LOCK(&fh->f_lock);
 	ret = mca_common_ompio_file_read_at(&data->ompio_fh, offset, buf, count,
 					    datatype, status);
@@ -97,6 +101,8 @@ mca_io_bbview_file_iread(ompi_file_t *fh, void *buf, size_t count,
 	mca_common_bbview_data_t *data;
 
 	data = (mca_common_bbview_data_t *)fh->f_io_selected_data;
+	if (data->state == BBVIEW_STATE_ACTIVE)
+		return OMPI_ERR_NOT_SUPPORTED;
 	OPAL_THREAD_LOCK(&fh->f_lock);
 	ret = mca_common_ompio_file_iread(&data->ompio_fh, buf, count, datatype,
 					  request);
@@ -115,6 +121,8 @@ mca_io_bbview_file_iread_at(ompi_file_t *fh, OMPI_MPI_OFFSET_TYPE offset,
 	mca_common_bbview_data_t *data;
 
 	data = (mca_common_bbview_data_t *)fh->f_io_selected_data;
+	if (data->state == BBVIEW_STATE_ACTIVE)
+		return OMPI_ERR_NOT_SUPPORTED;
 	OPAL_THREAD_LOCK(&fh->f_lock);
 	ret = mca_common_ompio_file_iread_at(&data->ompio_fh, offset, buf,
 					     count, datatype, request);
@@ -134,6 +142,8 @@ mca_io_bbview_file_read_all(ompi_file_t *fh, void *buf, size_t count,
 	mca_common_bbview_data_t *data;
 
 	data = (mca_common_bbview_data_t *)fh->f_io_selected_data;
+	if (data->state == BBVIEW_STATE_ACTIVE)
+		return OMPI_ERR_NOT_SUPPORTED;
 
 	OPAL_THREAD_LOCK(&fh->f_lock);
 	ret = mca_common_ompio_file_read_all(&data->ompio_fh, buf, count,
@@ -158,6 +168,8 @@ mca_io_bbview_file_iread_all(ompi_file_t *fh, void *buf, size_t count,
 	mca_common_bbview_data_t *data = NULL;
 
 	data = (mca_common_bbview_data_t *)fh->f_io_selected_data;
+	if (data->state == BBVIEW_STATE_ACTIVE)
+		return OMPI_ERR_NOT_SUPPORTED;
 
 	OPAL_THREAD_LOCK(&fh->f_lock);
 	ret = mca_common_ompio_file_iread_all(&data->ompio_fh, buf, count,
@@ -177,6 +189,8 @@ mca_io_bbview_file_read_at_all(ompi_file_t *fh, OMPI_MPI_OFFSET_TYPE offset,
 	mca_common_bbview_data_t *data;
 
 	data = (mca_common_bbview_data_t *)fh->f_io_selected_data;
+	if (data->state == BBVIEW_STATE_ACTIVE)
+		return OMPI_ERR_NOT_SUPPORTED;
 	OPAL_THREAD_LOCK(&fh->f_lock);
 	ret = mca_common_ompio_file_read_at_all(&data->ompio_fh, offset, buf,
 						count, datatype, status);
@@ -194,6 +208,8 @@ mca_io_bbview_file_iread_at_all(ompi_file_t *fh, OMPI_MPI_OFFSET_TYPE offset,
 	int ret = OMPI_SUCCESS;
 	mca_common_bbview_data_t *data;
 	data = (mca_common_bbview_data_t *)fh->f_io_selected_data;
+	if (data->state == BBVIEW_STATE_ACTIVE)
+		return OMPI_ERR_NOT_SUPPORTED;
 
 	OPAL_THREAD_LOCK(&fh->f_lock);
 	ret = mca_common_ompio_file_iread_at_all(&data->ompio_fh, offset, buf,
@@ -216,6 +232,8 @@ mca_io_bbview_file_read_shared(ompi_file_t *fp, void *buf, size_t count,
 	mca_sharedfp_base_module_t *shared_fp_base_module;
 
 	data = (mca_common_bbview_data_t *)fp->f_io_selected_data;
+	if (data->state == BBVIEW_STATE_ACTIVE)
+		return OMPI_ERR_NOT_SUPPORTED;
 	fh = &data->ompio_fh;
 
 	/*get the shared fp module associated with this file*/
@@ -244,6 +262,8 @@ mca_io_bbview_file_iread_shared(ompi_file_t *fh, void *buf, size_t count,
 	mca_sharedfp_base_module_t *shared_fp_base_module;
 
 	data = (mca_common_bbview_data_t *)fh->f_io_selected_data;
+	if (data->state == BBVIEW_STATE_ACTIVE)
+		return OMPI_ERR_NOT_SUPPORTED;
 	ompio_fh = &data->ompio_fh;
 
 	/*get the shared fp module associated with this file*/
@@ -273,6 +293,8 @@ mca_io_bbview_file_read_ordered(ompi_file_t *fh, void *buf, size_t count,
 	mca_sharedfp_base_module_t *shared_fp_base_module;
 
 	data = (mca_common_bbview_data_t *)fh->f_io_selected_data;
+	if (data->state == BBVIEW_STATE_ACTIVE)
+		return OMPI_ERR_NOT_SUPPORTED;
 	ompio_fh = &data->ompio_fh;
 
 	/*get the shared fp module associated with this file*/
@@ -300,6 +322,8 @@ mca_io_bbview_file_read_ordered_begin(ompi_file_t *fh, void *buf, size_t count,
 	mca_sharedfp_base_module_t *shared_fp_base_module;
 
 	data = (mca_common_bbview_data_t *)fh->f_io_selected_data;
+	if (data->state == BBVIEW_STATE_ACTIVE)
+		return OMPI_ERR_NOT_SUPPORTED;
 	ompio_fh = &data->ompio_fh;
 
 	/*get the shared fp module associated with this file*/
@@ -327,6 +351,8 @@ mca_io_bbview_file_read_ordered_end(ompi_file_t *fh, void *buf,
 	mca_sharedfp_base_module_t *shared_fp_base_module;
 
 	data = (mca_common_bbview_data_t *)fh->f_io_selected_data;
+	if (data->state == BBVIEW_STATE_ACTIVE)
+		return OMPI_ERR_NOT_SUPPORTED;
 	ompio_fh = &data->ompio_fh;
 
 	/*get the shared fp module associated with this file*/
@@ -355,6 +381,8 @@ mca_io_bbview_file_read_all_begin(ompi_file_t *fh, void *buf, size_t count,
 	mca_common_bbview_data_t *data;
 
 	data = (mca_common_bbview_data_t *)fh->f_io_selected_data;
+	if (data->state == BBVIEW_STATE_ACTIVE)
+		return OMPI_ERR_NOT_SUPPORTED;
 	fp = &data->ompio_fh;
 	if (true == fp->f_split_coll_in_use) {
 		printf("Only one split collective I/O operation allowed per "
@@ -378,6 +406,8 @@ mca_io_bbview_file_read_all_end(ompi_file_t *fh, void *buf,
 	mca_common_bbview_data_t *data;
 
 	data = (mca_common_bbview_data_t *)fh->f_io_selected_data;
+	if (data->state == BBVIEW_STATE_ACTIVE)
+		return OMPI_ERR_NOT_SUPPORTED;
 	fp = &data->ompio_fh;
 	ret = ompi_request_wait(&fp->f_split_coll_req, status);
 
@@ -396,6 +426,8 @@ mca_io_bbview_file_read_at_all_begin(ompi_file_t *fh,
 	mca_common_bbview_data_t *data;
 	ompio_file_t *fp = NULL;
 	data = (mca_common_bbview_data_t *)fh->f_io_selected_data;
+	if (data->state == BBVIEW_STATE_ACTIVE)
+		return OMPI_ERR_NOT_SUPPORTED;
 	fp = &data->ompio_fh;
 
 	if (true == fp->f_split_coll_in_use) {
@@ -420,6 +452,8 @@ mca_io_bbview_file_read_at_all_end(ompi_file_t *fh, void *buf,
 	ompio_file_t *fp = NULL;
 
 	data = (mca_common_bbview_data_t *)fh->f_io_selected_data;
+	if (data->state == BBVIEW_STATE_ACTIVE)
+		return OMPI_ERR_NOT_SUPPORTED;
 	fp = &data->ompio_fh;
 	ret = ompi_request_wait(&fp->f_split_coll_req, status);
 

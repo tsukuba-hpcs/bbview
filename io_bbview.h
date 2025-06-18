@@ -108,10 +108,17 @@ OMPI_DECLSPEC extern mca_io_base_component_3_0_0_t mca_io_bbview_component;
 #include "ompi/mca/common/ompio/common_ompio.h"
 #include "ompi/mca/common/ompio/common_ompio_aggregators.h"
 
+typedef enum {
+   BBVIEW_STATE_DEFAULT = 0,
+   BBVIEW_STATE_FALLBACK = 1,
+   BBVIEW_STATE_ACTIVE = 2,
+} bbview_state_t;
+
 struct mca_common_bbview_data_t {
    ompio_file_t ompio_fh;
 
-   size_t view_index; // 0: default view, 1~: user defined view (saved in the local file)
+   bbview_state_t state; // state of the bbview, default, fallback or active
+   size_t view_index;
 
    // Original view parameters
    OMPI_MPI_OFFSET_TYPE saved_disp;

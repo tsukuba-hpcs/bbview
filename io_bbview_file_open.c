@@ -327,7 +327,7 @@ mca_io_bbview_file_set_atomicity(ompi_file_t *fh, int flag)
 		flag = 1;
 	}
 
-	if (data->view_index > 0) {
+	if (data->state == BBVIEW_STATE_ACTIVE) {
 		OPAL_THREAD_UNLOCK(&fh->f_lock);
 		return OMPI_ERROR;
 	}
@@ -352,6 +352,7 @@ mca_io_bbview_file_set_atomicity(ompi_file_t *fh, int flag)
 		} else {
 			ret = MPI_ERR_IO;
 		}
+		data->state = BBVIEW_STATE_FALLBACK;
 	} else {
 		data->ompio_fh.f_atomicity = flag;
 	}
