@@ -53,12 +53,30 @@ static int set_xattrs_for_bbview(const char *path, mca_common_bbview_data_t *dat
         perror("realpath");
         return -1;
     }
-    setxattr(path, BBVIEW_ATTR_DEST_PATH, buf, strlen(buf), 0);
 
-    setxattr(path, BBVIEW_ATTR_DISP, &data->saved_disp, sizeof(data->saved_disp), 0);
+    rc = setxattr(path, BBVIEW_ATTR_DEST_PATH, buf, strlen(buf), 0);
+    if (rc < 0) {
+        perror("setxattr BBVIEW_ATTR_DEST_PATH");
+        return -1;
+    }
 
-    setxattr(path, BBVIEW_ATTR_DATATYPE, data->saved_dt_buf, data->saved_dt_len, 0);
-    setxattr(path, BBVIEW_ATTR_ETYPE, data->saved_et_buf, data->saved_et_len, 0);
+    rc = setxattr(path, BBVIEW_ATTR_DISP, &data->saved_disp, sizeof(data->saved_disp), 0);
+    if (rc < 0) {
+        perror("setxattr BBVIEW_ATTR_DISP");
+        return -1;
+    }
+
+    rc = setxattr(path, BBVIEW_ATTR_DATATYPE, data->saved_dt_buf, data->saved_dt_len, 0);
+    if (rc < 0) {
+        perror("setxattr BBVIEW_ATTR_DATATYPE");
+        return -1;
+    }
+
+    rc = setxattr(path, BBVIEW_ATTR_ETYPE, data->saved_et_buf, data->saved_et_len, 0);
+    if (rc < 0) {
+        perror("setxattr BBVIEW_ATTR_ETYPE");
+        return -1;
+    }
 
     return 0;
 }
