@@ -112,10 +112,6 @@ execute(char *src, char *dst)
 	size_t etype_size;
 	void *buf = NULL;
 	size_t buf_size;
-	pmix_data_buffer_t proc;
-	char proc_buf[PATH_MAX];
-	size_t proc_len;
-	ompi_proc_t **p;
 
 	syslog(LOG_INFO, "bbviewd: begin %s -> %s", src, dst);
 
@@ -139,24 +135,13 @@ execute(char *src, char *dst)
 		syslog(LOG_ERR, "missing xattr %s on %s: %s", BBVIEW_ATTR_DISP, src, strerror(errno));
 		goto err_close;
 	}
-	if ((xl = fgetxattr(src_fd, BBVIEW_ATTR_PROC, proc_buf, sizeof(proc_buf))) < 0) {
-		syslog(LOG_ERR, "missing xattr %s on %s: %s", BBVIEW_ATTR_PROC, src, strerror(errno));
-		goto err_close;
-	}
-	PMIX_DATA_BUFFER_LOAD(&proc, proc_buf, xl);
-	ret = ompi_proc_unpack(&proc, 1, &p, NULL, NULL);
-	if (ret != OMPI_SUCCESS) {
-		syslog(LOG_ERR, "ompi_proc_unpack failed");
-		goto err_close;
-	}
-	p[0]->super.proc_flags = OPAL_PROC_NON_LOCAL;
 
-	etype = ompi_datatype_create_from_packed_description((void **)&et_buf, p[0]);
+	etype = ompi_datatype_create_from_packed_description((void **)&et_buf, ompi_proc_local());
 	if (etype == NULL) {
 		syslog(LOG_ERR, "ompi_datatype_create_from_packed_description(etype) failed");
 		goto err_close;
 	}
-	dtype = ompi_datatype_create_from_packed_description((void **)&dt_buf, p[0]);
+	dtype = ompi_datatype_create_from_packed_description((void **)&dt_buf, ompi_proc_local());
 	if (dtype == NULL) {
 		syslog(LOG_ERR, "ompi_datatype_create_from_packed_description(dtype) failed");
 		goto err_close;
