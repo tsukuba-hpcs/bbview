@@ -94,11 +94,13 @@ mca_io_bbview_file_flush(struct ompi_file_t *fp)
 
 
 	data = (mca_common_bbview_data_t *)fp->f_io_selected_data;
-	
-    if (data->view_index == 0) {
-        // No need to flush the default view
+
+    if (data->state != BBVIEW_STATE_ACTIVE) {
+        fprintf(stderr, "File is not in active state, skip flush\n");
         return OMPI_SUCCESS;
     }
+    fprintf(stderr, "Flushing file %s for view index %ld\n",
+            fp->f_filename, data->view_index);
 
 	snprintf(local_filename, sizeof(local_filename), BBVIEW_TMP_DIR "/%s-%d-%ld",
 		fp->f_filename, ompi_comm_rank(fp->f_comm), data->view_index);
