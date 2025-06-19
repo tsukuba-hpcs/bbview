@@ -380,7 +380,6 @@ mca_io_bbview_file_set_view(ompi_file_t *fp, OMPI_MPI_OFFSET_TYPE disp,
 				return ret;
 			}
 			data->saved_datarep = NULL;
-			data->saved_info = NULL;
 		}
 		if (data->state != BBVIEW_STATE_FALLBACK)
 			data->state = BBVIEW_STATE_DEFAULT;
@@ -401,15 +400,12 @@ mca_io_bbview_file_set_view(ompi_file_t *fp, OMPI_MPI_OFFSET_TYPE disp,
 			return ret;
 		}
 		data->saved_datarep = NULL;
-		data->saved_info = NULL;
 	}
 
 	data->state = BBVIEW_STATE_ACTIVE;
 	data->view_index++;
 	if (datarep)
 		data->saved_datarep = strdup(datarep);
-	if (info)
-		opal_info_dup(info, &data->saved_info);
 	data->saved_etype = etype;
 	data->saved_filetype = filetype;
 	data->saved_disp = disp;
@@ -451,7 +447,8 @@ mca_io_bbview_file_set_view(ompi_file_t *fp, OMPI_MPI_OFFSET_TYPE disp,
 		flags |= O_DIRECT;
 	opal_cstring_t *dio_buf = NULL;
 	int dio_set = 0;
-	opal_info_get(info, "direct_io", &dio_buf,
+	if (info)
+		opal_info_get(info, "direct_io", &dio_buf,
                                 &dio_set);
 	if (dio_set) {
 		bool rc;

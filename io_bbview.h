@@ -127,7 +127,6 @@ struct mca_common_bbview_data_t {
    char *saved_et_buf;
    size_t saved_et_len;
    char *saved_datarep;
-   opal_info_t *saved_info;
    ompi_datatype_t *saved_etype;
    ompi_datatype_t *saved_filetype;
 };
