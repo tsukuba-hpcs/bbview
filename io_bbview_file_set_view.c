@@ -404,6 +404,7 @@ mca_io_bbview_file_set_view(ompi_file_t *fp, OMPI_MPI_OFFSET_TYPE disp,
 		data->saved_info = NULL;
 	}
 
+	data->state = BBVIEW_STATE_ACTIVE;
 	data->view_index++;
 	if (datarep)
 		data->saved_datarep = strdup(datarep);
