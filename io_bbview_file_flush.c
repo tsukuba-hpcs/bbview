@@ -60,25 +60,6 @@ static int set_xattrs_for_bbview(const char *path, mca_common_bbview_data_t *dat
     setxattr(path, BBVIEW_ATTR_DATATYPE, data->saved_dt_buf, data->saved_dt_len, 0);
     setxattr(path, BBVIEW_ATTR_ETYPE, data->saved_et_buf, data->saved_et_len, 0);
 
-    PMIX_DATA_BUFFER_CREATE(proc);
-    if (proc == NULL) {
-        fprintf(stderr, "Failed to create data buffer\n");
-        return -1;
-    }
-    rc = ompi_proc_pack(&local, 1, proc);
-    if (rc != OMPI_SUCCESS) {
-        fprintf(stderr, "Failed to pack proc\n");
-        PMIX_DATA_BUFFER_RELEASE(proc);
-        return -1;
-    }
-    PMIX_DATA_BUFFER_UNLOAD(proc, proc_buf, proc_len);
-    if (proc_buf == NULL) {
-        fprintf(stderr, "Failed to unload proc buffer\n");
-        PMIX_DATA_BUFFER_RELEASE(proc);
-        return -1;
-    }
-    setxattr(path, BBVIEW_ATTR_PROC, proc_buf, proc_len, 0);
-    PMIX_DATA_BUFFER_RELEASE(proc);
     return 0;
 }
 
