@@ -112,7 +112,7 @@ execute(char *src, char *dst)
 	size_t etype_size;
 	void *buf = NULL;
 	size_t buf_size;
-	pmix_data_buffer_t *proc = NULL;
+	pmix_data_buffer_t proc;
 	char proc_buf[PATH_MAX];
 	size_t proc_len;
 	ompi_proc_t **p;
@@ -143,34 +143,29 @@ execute(char *src, char *dst)
 		syslog(LOG_ERR, "missing xattr %s on %s: %s", BBVIEW_ATTR_PROC, src, strerror(errno));
 		goto err_close;
 	}
-	PMIX_DATA_BUFFER_CREATE(proc);
-	PMIX_DATA_BUFFER_LOAD(proc, proc_buf, xl);
-	if (!proc) {
-		syslog(LOG_ERR, "PMIX_DATA_BUFFER_LOAD failed");
-		goto err_close;
-	}
-	ret = ompi_proc_unpack(proc, 1, &p, NULL, NULL);
+	PMIX_DATA_BUFFER_LOAD(&proc, proc_buf, xl);
+	ret = ompi_proc_unpack(&proc, 1, &p, NULL, NULL);
 	if (ret != OMPI_SUCCESS) {
 		syslog(LOG_ERR, "ompi_proc_unpack failed");
-		goto err_proc;
+		goto err_close;
 	}
 	p[0]->super.proc_flags = OPAL_PROC_NON_LOCAL;
 
 	etype = ompi_datatype_create_from_packed_description((void **)&et_buf, p[0]);
 	if (etype == NULL) {
 		syslog(LOG_ERR, "ompi_datatype_create_from_packed_description(etype) failed");
-		goto err_proc;
+		goto err_close;
 	}
 	dtype = ompi_datatype_create_from_packed_description((void **)&dt_buf, p[0]);
 	if (dtype == NULL) {
 		syslog(LOG_ERR, "ompi_datatype_create_from_packed_description(dtype) failed");
-		goto err_proc;
+		goto err_close;
 	}
 
 	ret = ompi_datatype_type_size(etype, &etype_size);
 	if (ret != OMPI_SUCCESS) {
 		syslog(LOG_ERR, "ompi_datatype_type_size failed");
-		goto err_proc;
+		goto err_close;
 	}
 
 	size_t etypes_per_buffer = (TARGET_BUFFER_SIZE + etype_size - 1) / etype_size;
@@ -179,7 +174,7 @@ execute(char *src, char *dst)
 	buf = malloc(buf_size);
 	if (!buf) {
 		syslog(LOG_ERR, "malloc failed");
-		goto err_proc;
+		goto err_close;
 	}
 
 	ret = ompi_file_open((struct ompi_communicator_t *)&ompi_mpi_comm_self, dst, OMPIO_MODE_WRONLY, (struct opal_info_t *)&ompi_mpi_info_null, &fh);
@@ -228,8 +223,6 @@ err_fclose:
 	ompi_file_close(&fh);
 err_free:
 	free(buf);
-err_proc:
-	PMIX_DATA_BUFFER_RELEASE(proc);
 err_close:
 	close(src_fd);
 	return -1;
