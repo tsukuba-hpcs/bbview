@@ -121,13 +121,13 @@ execute(char *src, char *dst)
 		return -1;
 	}
 
-	et_buf = malloc(PATH_MAX);
-	if ((xl = fgetxattr(src_fd, BBVIEW_ATTR_ETYPE, et_buf, PATH_MAX)) < 0) {
+	et_buf = malloc(TARGET_BUFFER_SIZE);
+	if ((xl = fgetxattr(src_fd, BBVIEW_ATTR_ETYPE, et_buf, TARGET_BUFFER_SIZE)) < 0) {
 		syslog(LOG_ERR, "missing xattr %s on %s: %s", BBVIEW_ATTR_ETYPE, src, strerror(errno));
 		goto err_close;
 	}
-	dt_buf = malloc(PATH_MAX);
-	if ((xl = fgetxattr(src_fd, BBVIEW_ATTR_DATATYPE, dt_buf, PATH_MAX)) < 0) {
+	dt_buf = malloc(TARGET_BUFFER_SIZE);
+	if ((xl = fgetxattr(src_fd, BBVIEW_ATTR_DATATYPE, dt_buf, TARGET_BUFFER_SIZE)) < 0) {
 		syslog(LOG_ERR, "missing xattr %s on %s: %s", BBVIEW_ATTR_DATATYPE, src, strerror(errno));
 		goto err_close;
 	}
