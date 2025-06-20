@@ -89,6 +89,7 @@ OMPI_DECLSPEC extern int mca_io_ompio_coll_timing_info;
 #define BBVIEW_ATTR_ETYPE "user.bbview.etype"
 #define BBVIEW_ATTR_DATATYPE "user.bbview.datatype"
 #define BBVIEW_ATTR_DISP "user.bbview.disp"
+#define MAX_XATTR_VALUE_SIZE 65536
 
 /*---------------------------*/
 

@@ -43,11 +43,11 @@
 static int set_xattrs_for_bbview(const char *path, mca_common_bbview_data_t *data)
 {
     char buf[PATH_MAX];
-    pmix_data_buffer_t *proc = NULL;
-    ompi_proc_t *local = ompi_proc_local();
     int rc;
-    char *proc_buf;
-    size_t proc_len;
+    size_t offset;
+    int index;
+    char attr_name[256];
+
 
     if (realpath(data->ompio_fh.f_filename, buf) == NULL) {
         perror("realpath");
@@ -66,10 +66,23 @@ static int set_xattrs_for_bbview(const char *path, mca_common_bbview_data_t *dat
         return -1;
     }
 
-    rc = setxattr(path, BBVIEW_ATTR_DATATYPE, data->saved_dt_buf, data->saved_dt_len, 0);
-    if (rc < 0) {
-        perror("setxattr BBVIEW_ATTR_DATATYPE");
-        return -1;
+    offset = 0;
+    index = 0;
+    while (offset < data->saved_dt_len) {
+        size_t chunk_size = data->saved_dt_len - offset;
+        if (chunk_size > MAX_XATTR_VALUE_SIZE)
+            chunk_size = MAX_XATTR_VALUE_SIZE;
+
+        snprintf(attr_name, sizeof(attr_name), "%s%d", BBVIEW_ATTR_DATATYPE, index);
+
+        rc = setxattr(path, attr_name, data->saved_dt_buf + offset, chunk_size, 0);
+        if (rc < 0) {
+            perror("setxattr BBVIEW_ATTR_DATATYPE.*");
+            return -1;
+        }
+
+        offset += chunk_size;
+        index++;
     }
 
     rc = setxattr(path, BBVIEW_ATTR_ETYPE, data->saved_et_buf, data->saved_et_len, 0);

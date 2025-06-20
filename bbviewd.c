@@ -112,6 +112,10 @@ execute(char *src, char *dst)
 	size_t etype_size;
 	void *buf = NULL;
 	size_t buf_size;
+	size_t total_len;
+	int index;
+	char attr_name[256];
+	char part_buf[MAX_XATTR_VALUE_SIZE];
 
 	syslog(LOG_INFO, "bbviewd: begin %s -> %s", src, dst);
 
@@ -121,15 +125,27 @@ execute(char *src, char *dst)
 		return -1;
 	}
 
-	et_buf = malloc(TARGET_BUFFER_SIZE);
-	if ((xl = fgetxattr(src_fd, BBVIEW_ATTR_ETYPE, et_buf, TARGET_BUFFER_SIZE)) < 0) {
+	et_buf = malloc(MAX_XATTR_VALUE_SIZE);
+	if ((xl = fgetxattr(src_fd, BBVIEW_ATTR_ETYPE, et_buf, MAX_XATTR_VALUE_SIZE)) < 0) {
 		syslog(LOG_ERR, "missing xattr %s on %s: %s", BBVIEW_ATTR_ETYPE, src, strerror(errno));
 		goto err_close;
 	}
 	dt_buf = malloc(TARGET_BUFFER_SIZE);
-	if ((xl = fgetxattr(src_fd, BBVIEW_ATTR_DATATYPE, dt_buf, TARGET_BUFFER_SIZE)) < 0) {
-		syslog(LOG_ERR, "missing xattr %s on %s: %s", BBVIEW_ATTR_DATATYPE, src, strerror(errno));
-		goto err_close;
+	index = 0;
+	total_len = 0;
+	while (index * MAX_XATTR_VALUE_SIZE < TARGET_BUFFER_SIZE) {
+    	snprintf(attr_name, sizeof(attr_name), "%s%d", BBVIEW_ATTR_DATATYPE, index);
+    	xl = fgetxattr(src_fd, attr_name, part_buf, sizeof(part_buf));
+    	if (xl < 0) {
+			if (index == 0) {
+				syslog(LOG_ERR, "missing xattr %s on %s: %s", attr_name, src, strerror(errno));
+				goto err_close;
+			}
+        	break;
+    	}
+    	memcpy(dt_buf + total_len, part_buf, xl);
+    	total_len += xl;
+    	index++;
 	}
 	if ((xl = fgetxattr(src_fd, BBVIEW_ATTR_DISP, &disp, sizeof(disp))) < 0) {
 		syslog(LOG_ERR, "missing xattr %s on %s: %s", BBVIEW_ATTR_DISP, src, strerror(errno));
