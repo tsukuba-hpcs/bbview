@@ -380,6 +380,8 @@ mca_io_bbview_file_set_view(ompi_file_t *fp, OMPI_MPI_OFFSET_TYPE disp,
 				return ret;
 			}
 			data->saved_datarep = NULL;
+			close(fh->fd);
+			fh->fd = open(fp->f_filename, O_RDWR);
 		}
 		if (data->state != BBVIEW_STATE_FALLBACK)
 			data->state = BBVIEW_STATE_DEFAULT;
