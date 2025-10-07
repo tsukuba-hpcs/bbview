@@ -52,3 +52,7 @@ $ mpirun -np 1 --mca io bbview --mca fcoll individual ./a.out
 ```bash
 $ ssh $node bbviewd wait
 ```
+
+## Publication
+
+* Sohei Koyama, Osamu Tatebe, "BBView: A View-Aware Burst-Buffer Mechanism for MPI-IO", Proceedings of 4th Workshop on Re-envisioning Extreme-Scale I/O for Emerging Hybrid HPC Workloads (REX-IO), 2025
